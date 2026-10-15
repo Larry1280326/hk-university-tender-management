@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass, field, asdict
 from email.header import decode_header
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set
 
 TEMPLATE_PATTERN = re.compile(
     r"Request for Tender Documents\s*[–\-]\s*([A-Za-z0-9/_\-\s]+?)\s*[–\-]",
@@ -17,12 +17,21 @@ HKUST_TN_PATTERN = re.compile(
     r"\b(TN[A-Z0-9]{6,12}(?:\s*PQ)?)\b",
     re.IGNORECASE,
 )
+# HKUST's slashed references are "<PREFIX>/<YEAR>/<SEQ>", e.g. EO/2026/012, FO/2025/102.
+# The year segment is restricted to a real year on purpose: a bare \d{4} also matched
+# unrelated references of the same shape living in the same mailbox, e.g. the works order
+# "YFI/4401/025-VO" (project 4401), which is not a tender at all. Note the live portal
+# issues only the TN-form numbers below; this branch exists for older tender references.
 HKUST_CODE_PATTERN = re.compile(
-    r"\b([A-Z]{2,6}/\d{4}/\d{2,5}(?:[A-Z0-9_-]+)?)\b",
+    r"\b([A-Z]{2,6}/(?:19|20)\d{2}/\d{2,5}(?:[A-Z0-9_-]+)?)\b",
     re.IGNORECASE,
 )
+# "Reference" must precede "Ref", or the shorter alternative takes the word and captures
+# its tail. The (?!\w) guard is load-bearing too: without it "Tender Notice" matches "No"
+# and captures "tice", and "Tender Notification" captures "tification". A \b would not do
+# here, since after "Tender No." both neighbouring characters are non-word.
 TENDER_REF_KEYWORD_PATTERN = re.compile(
-    r"\bTender\s*(?:No\.?|Ref\.?|Reference)\s*[:：#]?\s*([A-Za-z0-9/_-]+)",
+    r"\bTender\s*(?:Reference|No\.?|Ref\.?)(?!\w)\s*[:：#]?\s*([A-Za-z0-9/_-]+)",
     re.IGNORECASE,
 )
 GENERIC_IGNORE_WORDS = {
@@ -113,6 +122,22 @@ def extract_tender_no_from_text(
             return found_kw
 
     return None
+
+
+def extract_tender_refs_from_subject(text: str) -> Set[str]:
+    """Every strict tender reference in ``text``, with no loose keyword fallback.
+
+    ``extract_tender_no_from_text`` answers "which tender is this one email about" and
+    falls back to a keyword pattern that, over real mailbox subjects, yields fragments
+    like "tice" or "erence". Scanning a whole mailbox needs only unambiguous codes, so
+    it uses this instead and treats anything else as noise.
+    """
+    if not text:
+        return set()
+
+    refs = {match.strip() for match in HKUST_TN_PATTERN.findall(text)}
+    refs.update(match.strip() for match in HKUST_CODE_PATTERN.findall(text))
+    return {ref for ref in refs if len(ref) >= 6}
 
 
 def normalize_tender_ref(ref: Optional[str]) -> str:

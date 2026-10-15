@@ -15,6 +15,9 @@ wheels/
 # Exported drafts
 output_drafts/
 
+# Downloaded tender documents
+output_documents/
+
 # Certificates & Assets
 assets/*.pdf
 assets/debug/

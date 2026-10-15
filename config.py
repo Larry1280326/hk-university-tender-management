@@ -9,6 +9,9 @@ BASE_DIR = Path(__file__).resolve().parent
 ASSETS_DIR = BASE_DIR / "assets"
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 
+# Downloaded tender documents, one subfolder per tender number.
+DOCUMENTS_DIR = Path(os.getenv("HKUST_DOCUMENTS_DIR", str(BASE_DIR / "output_documents")))
+
 # Load environment variables from .env
 load_dotenv(BASE_DIR / ".env")
 
@@ -19,6 +22,11 @@ HKUST_WELCOME_URL = os.getenv(
 HKUST_LOGIN_URL = os.getenv("HKUST_LOGIN_URL", "https://w5.ab.ust.hk/jstd/td_login")
 HKUST_TENDER_NOTICE_URL = os.getenv(
     "HKUST_TENDER_NOTICE_URL", "https://w5.ab.ust.hk/jstd/td_tender_notice"
+)
+# The offer-selection page renders two tender tables: tenders the vendor was invited
+# to (documents already released) and open tenders (documents requested by email).
+HKUST_TENDER_OFFR_SEL_URL = os.getenv(
+    "HKUST_TENDER_OFFR_SEL_URL", "https://w5.ab.ust.hk/jstd/td_tender_offr_sel"
 )
 HKUST_VENDOR_ID = os.getenv("HKUST_VENDOR_ID", "")
 HKUST_PASSWORD = os.getenv("HKUST_PASSWORD", "")
@@ -105,6 +113,10 @@ GMAIL_USER = os.getenv("GMAIL_USER", os.getenv("CONTACT_EMAIL", ""))
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "").replace(" ", "")
 GMAIL_DRAFTS_URL = os.getenv("GMAIL_DRAFTS_URL", "https://mail.google.com/mail/#drafts")
 HKUST_MAIL_TAG = os.getenv("HKUST_MAIL_TAG", "HKUST Tenders")
+
+# How far back to look when deciding whether a tender has already been dealt with. The
+# check reads subject lines in Inbox, Drafts and Sent, so this also bounds its cost.
+HKUST_MAIL_LOOKBACK_DAYS = _env_int("HKUST_MAIL_LOOKBACK_DAYS", 60)
 
 # Email Template
 EMAIL_SUBJECT_TEMPLATE = "Request for Tender Documents – {tender_no} - {description}"

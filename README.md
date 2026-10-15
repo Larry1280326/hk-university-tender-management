@@ -2,10 +2,15 @@
 
 Automated workflow to:
 1. Log in to the HKUST e-Tendering Portal (`https://w5.ab.ust.hk/jstd/td_welcome?page=td_login`) and accept the Terms & Conditions.
-2. Scrape all active Tender Notices and parse the enquiry section (Contact Person name, email, phone).
-3. Allow interactive selection of suitable tenders (or keyword filtering).
+2. Scrape the offer selection page (`td_tender_offr_sel`), which renders **two separate tables**:
+   - **My Tender Invitation / Interested Tender(s)** — tenders you were invited to. The portal has
+     already released these documents, so the tool can download them.
+   - **Tender Notice** — open tenders. No documents are released; the detail page carries the
+     Purchasing Office contact to email instead.
+3. Show the two groups separately, then allow interactive selection.
 4. Automatically draft personalized enquiry emails directly in **Gmail** (with company details and Business Registration certificate attached).
-5. Read your mailbox, track replies from HKUST, and automatically apply organized Gmail tags (e.g. `HKUST Tenders/<tender_no>`).
+5. Before scraping, check Inbox, Drafts and Sent for tenders you have already dealt with, so they are not offered again.
+6. Read your mailbox to review HKUST replies and detected tender references (read-only).
 
 ---
 
@@ -71,7 +76,7 @@ The application supports direct Gmail integration without requiring any Google C
 4. Set `GMAIL_USER` and `GMAIL_APP_PASSWORD` in your `.env` file.
 5. **Capabilities**:
    - Saves drafts directly to your Gmail **Drafts** folder via IMAP.
-   - Scans your inbox for HKUST replies and organizes them under Gmail labels (e.g. `HKUST Tenders/<tender_no>`).
+   - Lists HKUST replies and the tender references it detects in their subject lines, for review.
 
 #### 2. Offline Mode & Direct Web Links (Automatic Fallback)
 If `GMAIL_APP_PASSWORD` is not configured, the tool automatically:
@@ -89,8 +94,8 @@ uv run python app.py
 ```
 
 #### Interactive Main Menu:
-- **1. Scrape HKUST Tenders & Draft Emails**: Headless scraping + interactive tender checklist + Gmail draft creation with automatic tagging.
-- **2. Read Mailbox & Track HKUST Replies / Apply Tags**: Reads your Gmail inbox, identifies HKUST replies and tender references from subject lines, and applies nested tags.
+- **1. Scrape HKUST Tenders & Draft Emails**: Headless scraping of both tender tables + interactive tender checklist + optional download of invited-tender documents (see `HKUST_DOCUMENTS_DIR`) + Gmail draft creation with automatic tagging.
+- **2. Read Mailbox (HKUST Tenders & Replies)**: Reads your Gmail inbox and lists HKUST replies and the tender references detected in their subject lines. Read-only — it applies no labels.
 - **3. Test Google Account Connection**: Verifies Google App Password and IMAP connection.
 - **4. Exit**
 
@@ -103,14 +108,11 @@ uv run python app.py --help
 # Test Google IMAP / App Password connection
 uv run python app.py --test
 
-# Read mailbox and display HKUST tender emails / interactive tagging
+# Read mailbox and display HKUST tender emails
 uv run python app.py --read-mail
 
 # Custom scan limit when reading mailbox (e.g. latest 20 emails)
 uv run python app.py --read-mail --limit 20
-
-# Scan mailbox and automatically tag all HKUST tender emails in Gmail
-uv run python app.py --tag-tenders
 
 # Run portal scraper with visible Chromium browser
 uv run python app.py --visible
@@ -118,11 +120,18 @@ uv run python app.py --visible
 
 ---
 
-## Gmail Tagging & Tender Tracking
+## Tender Tracking & Gmail Labels
 
-The tool integrates Gmail labels:
-1. **Immediate Draft Tagging**: When drafts are created in Gmail, the `HKUST Tenders` label (configured by `HKUST_MAIL_TAG` in `.env`) is automatically attached to the newly saved drafts.
-2. **Mailbox Reply Tracking**: When reading the mailbox, the tool checks each email's sender, subject, and body for HKUST tenders and organizes detected emails under the `HKUST Tenders` label.
+1. **Already-handled check (runs before every scrape)**: the tool reads the **subject lines** of your
+   Inbox, Drafts and Sent folders for the last `HKUST_MAIL_LOOKBACK_DAYS` days (default 60). A tender
+   found there is hidden from the tender list, and the run prints which mailbox each hidden tender was
+   found in. This is what makes a reply you sent count as handled — labels are never consulted, so
+   nothing has to be tagged for it to work.
+2. **Immediate Draft Tagging**: When drafts are created in Gmail, the `HKUST Tenders` label (configured by `HKUST_MAIL_TAG` in `.env`) is automatically attached to the newly saved drafts.
+3. **Mailbox reading (read-only)**: menu option 2 / `--read-mail` lists the HKUST mail it finds and shows any email's details on demand. It never applies or removes labels.
+
+The `HKUST Tenders` label is applied only to drafts the tool creates. Nothing in the tool reads it
+back, so it exists purely for your own organisation in Gmail.
 
 ---
 
