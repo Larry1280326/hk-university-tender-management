@@ -7,7 +7,6 @@ from rich.table import Table
 
 import config
 from scraper.tender_parser import TenderNotice
-from mailer.email_parser import TenderReceivedEmail
 from mailer.template import TenderEmailDraft
 
 console = Console()
@@ -97,38 +96,6 @@ def display_invited_tenders(tenders: List[TenderNotice]):
     console.print(table)
 
 
-
-def display_received_emails_table(emails: List[TenderReceivedEmail]):
-    """Render a structured table of detected mailbox emails and tags."""
-    table = Table(
-        title=f"[bold yellow]HKUST & Tender Emails in Mailbox ({len(emails)} Found)[/bold yellow]",
-        show_header=True,
-        header_style="bold magenta",
-        expand=True,
-    )
-    table.add_column("#", style="dim", width=4)
-    table.add_column("Date", style="green", width=17)
-    table.add_column("Sender", style="cyan", width=26)
-    table.add_column("Subject", style="white", min_width=32)
-    table.add_column("Detected Tender", style="bold yellow", width=16)
-    table.add_column("Gmail Labels", style="magenta", width=22)
-
-    for idx, em in enumerate(emails, start=1):
-        labels_str = ", ".join(em.labels) if em.labels else "[dim]None[/dim]"
-        clean_date = em.date[:16] if em.date else "N/A"
-        tender_disp = em.tender_name or em.tender_no or "[dim]-[/dim]"
-        table.add_row(
-            str(idx),
-            clean_date,
-            em.sender[:25],
-            em.subject,
-            tender_disp[:40],
-            labels_str,
-        )
-
-    console.print(table)
-
-
 def display_draft_preview(sample: TenderEmailDraft, count: int):
     """Render a preview card of a generated tender email draft."""
     preview_box = (
@@ -144,20 +111,3 @@ def display_draft_preview(sample: TenderEmailDraft, count: int):
             border_style="yellow",
         )
     )
-
-
-def display_email_detail(email_item: TenderReceivedEmail):
-    """Render a detailed inspection card for a single received email."""
-    tender_info = email_item.tender_name or email_item.tender_no or "None"
-    if email_item.tender_name and email_item.tender_no:
-        tender_info = f"{email_item.tender_name} ({email_item.tender_no})"
-
-    detail_text = (
-        f"[bold]From:[/bold] {email_item.sender}\n"
-        f"[bold]Date:[/bold] {email_item.date}\n"
-        f"[bold]Subject:[/bold] {email_item.subject}\n"
-        f"[bold]Detected Tender:[/bold] {tender_info}\n"
-        f"[bold]Current Labels:[/bold] {', '.join(email_item.labels) if email_item.labels else 'None'}\n\n"
-        f"[bold]Subject / Snippet:[/bold]\n{email_item.body_snippet or '[dim]No preview available[/dim]'}"
-    )
-    console.print(Panel(detail_text, title="Email Details", border_style="yellow"))

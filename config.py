@@ -108,7 +108,7 @@ BR_CERTIFICATE_PATH = Path(
     os.getenv("BR_CERTIFICATE_PATH", str(ASSETS_DIR / "br_certificate.pdf"))
 )
 
-# Google Account Credentials (App Password / IMAP & SMTP)
+# Google Account Credentials (App Password / IMAP)
 GMAIL_USER = os.getenv("GMAIL_USER", os.getenv("CONTACT_EMAIL", ""))
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "").replace(" ", "")
 GMAIL_DRAFTS_URL = os.getenv("GMAIL_DRAFTS_URL", "https://mail.google.com/mail/#drafts")

@@ -1,13 +1,18 @@
-"""Unit tests for the unified MIME message builder and IMAP session manager."""
+"""Unit tests for the unified MIME message builder, the IMAP session manager, and the connection test."""
 
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import config
 from mailer.mime import build_mime_message
 from mailer.template import TenderEmailDraft
 from mailer.google_account import GoogleAccountMailer
+
+# Gmail localizes system folder names per account language. This is the name the account
+# this bug was reported against really reports -- not "[Gmail]/Drafts".
+_LOCALIZED_DRAFTS = b'(\\Drafts \\HasNoChildren) "/" "[Gmail]/&g0l6Pw-"'
 
 
 class TestMimeBuilderAndSession(unittest.TestCase):
@@ -69,16 +74,29 @@ class TestMimeBuilderAndSession(unittest.TestCase):
     def test_imap_session_context_manager(self, mock_imap_cls):
         mock_imap = MagicMock()
         mock_imap_cls.return_value = mock_imap
-        mock_imap.select.return_value = ("OK", [b"10"])
 
         mailer = GoogleAccountMailer(username="user@test.com", app_password="password123")
 
-        with mailer.imap_session(folder="INBOX", readonly=True) as mail:
+        with mailer.imap_session() as mail:
             self.assertEqual(mail, mock_imap)
             mock_imap.login.assert_called_once_with("user@test.com", "password123")
-            mock_imap.select.assert_called_once_with('"INBOX"', readonly=True)
 
         mock_imap.logout.assert_called_once()
+
+    @patch("imaplib.IMAP4_SSL")
+    def test_imap_session_refuses_to_connect_without_credentials(self, mock_imap_cls):
+        """A missing App Password must fail loudly rather than attempt an anonymous login."""
+        with patch.object(config, "CONTACT_EMAIL", ""), patch.object(
+            config, "GMAIL_APP_PASSWORD", ""
+        ):
+            mailer = GoogleAccountMailer()
+            self.assertFalse(mailer.is_configured())
+
+            with self.assertRaises(ValueError):
+                with mailer.imap_session():
+                    pass
+
+        mock_imap_cls.assert_not_called()
 
     @patch("imaplib.IMAP4_SSL")
     def test_imap_session_exception_still_logs_out(self, mock_imap_cls):
@@ -125,6 +143,65 @@ class TestMimeBuilderAndSession(unittest.TestCase):
         # Verify STORE was called to attach label to uid 777
         calls = [c[0] for c in mock_imap.uid.call_args_list]
         self.assertTrue(any(c[0] == "STORE" and c[1] == "777" for c in calls))
+
+
+class TestConnection(unittest.TestCase):
+    """``test_connection`` backs the "Test Google Account Connection" menu entry.
+
+    Its ``(bool, str)`` pair is what the user reads, so both halves are asserted here:
+    a failure must say why, and a success must name the folder it actually resolved.
+    """
+
+    def test_missing_credentials_report_a_configuration_problem(self):
+        with patch.object(config, "CONTACT_EMAIL", ""), patch.object(
+            config, "GMAIL_APP_PASSWORD", ""
+        ):
+            success, message = GoogleAccountMailer().test_connection()
+
+        self.assertFalse(success)
+        self.assertIn("GMAIL_USER", message)
+        self.assertIn("GMAIL_APP_PASSWORD", message)
+
+    @patch("imaplib.IMAP4_SSL")
+    def test_success_names_the_drafts_folder_it_resolved(self, mock_imap_cls):
+        """The folder must be the localized one Gmail reports, not an assumed "[Gmail]/Drafts"."""
+        mock_imap = MagicMock()
+        mock_imap_cls.return_value = mock_imap
+        mock_imap.list.return_value = ("OK", [_LOCALIZED_DRAFTS])
+
+        mailer = GoogleAccountMailer(username="user@test.com", app_password="password123")
+        success, message = mailer.test_connection()
+
+        self.assertTrue(success)
+        self.assertIn("[Gmail]/&g0l6Pw-", message)
+        mock_imap.login.assert_called_once_with("user@test.com", "password123")
+
+    @patch("imaplib.IMAP4_SSL")
+    def test_login_failure_is_reported_not_raised(self, mock_imap_cls):
+        """The menu path prints this message, so a bad password must not crash the app."""
+        mock_imap = MagicMock()
+        mock_imap_cls.return_value = mock_imap
+        mock_imap.login.side_effect = RuntimeError("Invalid credentials")
+
+        mailer = GoogleAccountMailer(username="user@test.com", app_password="wrong")
+        success, message = mailer.test_connection()
+
+        self.assertFalse(success)
+        self.assertIn("Invalid credentials", message)
+
+    @patch("imaplib.IMAP4_SSL")
+    def test_connection_is_closed_even_after_a_failure(self, mock_imap_cls):
+        """A failed probe must not leave the IMAP connection open on the account."""
+        mock_imap = MagicMock()
+        mock_imap_cls.return_value = mock_imap
+        mock_imap.list.side_effect = RuntimeError("server closed the connection")
+
+        success, _ = GoogleAccountMailer(
+            username="user@test.com", app_password="password123"
+        ).test_connection()
+
+        self.assertFalse(success)
+        mock_imap.logout.assert_called_once()
 
 
 if __name__ == "__main__":

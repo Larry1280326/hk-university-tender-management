@@ -10,7 +10,6 @@ Automated workflow to:
 3. Show the two groups separately, then allow interactive selection.
 4. Automatically draft personalized enquiry emails directly in **Gmail** (with company details and Business Registration certificate attached).
 5. Before scraping, check Inbox, Drafts and Sent for tenders you have already dealt with, so they are not offered again.
-6. Read your mailbox to review HKUST replies and detected tender references (read-only).
 
 ---
 
@@ -69,14 +68,13 @@ Place your official Business Registration certificate in `assets/br_certificate.
 
 The application supports direct Gmail integration without requiring any Google Cloud Console configuration:
 
-#### 1. Direct Gmail Drafting & Mailbox Sync (Google App Password)
+#### 1. Direct Gmail Drafting (Google App Password)
 1. Ensure **2-Step Verification** is enabled on your Google Account.
 2. Go to [Google App Passwords](https://myaccount.google.com/apppasswords).
 3. Create an app password (e.g. named `HKUST Workflow`).
 4. Set `GMAIL_USER` and `GMAIL_APP_PASSWORD` in your `.env` file.
 5. **Capabilities**:
    - Saves drafts directly to your Gmail **Drafts** folder via IMAP.
-   - Lists HKUST replies and the tender references it detects in their subject lines, for review.
 
 #### 2. Offline Mode & Direct Web Links (Automatic Fallback)
 If `GMAIL_APP_PASSWORD` is not configured, the tool automatically:
@@ -95,9 +93,8 @@ uv run python app.py
 
 #### Interactive Main Menu:
 - **1. Scrape HKUST Tenders & Draft Emails**: Headless scraping of both tender tables + interactive tender checklist + optional download of invited-tender documents (see `HKUST_DOCUMENTS_DIR`) + Gmail draft creation with automatic tagging.
-- **2. Read Mailbox (HKUST Tenders & Replies)**: Reads your Gmail inbox and lists HKUST replies and the tender references detected in their subject lines. Read-only — it applies no labels.
-- **3. Test Google Account Connection**: Verifies Google App Password and IMAP connection.
-- **4. Exit**
+- **2. Test Google Account Connection**: Verifies Google App Password and IMAP connection.
+- **3. Exit**
 
 #### Direct Command Line Flags:
 
@@ -107,12 +104,6 @@ uv run python app.py --help
 
 # Test Google IMAP / App Password connection
 uv run python app.py --test
-
-# Read mailbox and display HKUST tender emails
-uv run python app.py --read-mail
-
-# Custom scan limit when reading mailbox (e.g. latest 20 emails)
-uv run python app.py --read-mail --limit 20
 
 # Run portal scraper with visible Chromium browser
 uv run python app.py --visible
@@ -128,7 +119,6 @@ uv run python app.py --visible
    found in. This is what makes a reply you sent count as handled — labels are never consulted, so
    nothing has to be tagged for it to work.
 2. **Immediate Draft Tagging**: When drafts are created in Gmail, the `HKUST Tenders` label (configured by `HKUST_MAIL_TAG` in `.env`) is automatically attached to the newly saved drafts.
-3. **Mailbox reading (read-only)**: menu option 2 / `--read-mail` lists the HKUST mail it finds and shows any email's details on demand. It never applies or removes labels.
 
 The `HKUST Tenders` label is applied only to drafts the tool creates. Nothing in the tool reads it
 back, so it exists purely for your own organisation in Gmail.
@@ -173,4 +163,4 @@ To run the automated verification suite:
 uv run python -m unittest discover -s tests -v
 ```
 
-All 17 tests verify mock workflows, MIME generation, IMAP session handling, regex extraction, and `.env` dynamic loading without requiring network access.
+All 83 tests verify mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, regex extraction, and `.env` dynamic loading without requiring network access.

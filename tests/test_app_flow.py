@@ -1,9 +1,11 @@
-"""Tests for the select -> download flow driven from app.py.
+"""Tests for the flows driven from app.py: the pre-scrape mailbox check and select -> download.
 
 Only the invitation table's rows carry documents, so the download prompt must fire for
 those and never for open tenders.
 """
 
+import contextlib
+import io
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
@@ -49,6 +51,61 @@ def fake_portal_session(page):
     with patch.object(app, "portal_session") as session:
         session.return_value.__enter__.return_value = (page, MagicMock())
         yield session
+
+
+class TestProcessedTenderNumbers(unittest.TestCase):
+    """The pre-scrape check decides which tenders are HIDDEN from the scrape.
+
+    Erring permissive offers a tender twice; erring strict hides one the user never acted
+    on, which is the worse failure and the one these tests pin down.
+    """
+
+    def test_unconfigured_mailer_hides_nothing(self):
+        """Without credentials the scrape must still list every tender, so do not even scan."""
+        with patch.object(app, "GoogleAccountMailer") as mailer_cls:
+            mailer_cls.return_value.is_configured.return_value = False
+
+            result = app.get_processed_tender_numbers()
+
+        self.assertEqual(result, set())
+        mailer_cls.return_value.get_handled_tenders.assert_not_called()
+
+    def test_returns_every_reference_the_scan_found(self):
+        with patch.object(app, "GoogleAccountMailer") as mailer_cls:
+            mailer_cls.return_value.is_configured.return_value = True
+            mailer_cls.return_value.get_handled_tenders.return_value = {
+                "TNH2600105": ["Inbox", "Sent"],
+                "TNP2600099": ["Sent"],
+            }
+
+            result = app.get_processed_tender_numbers()
+
+        self.assertEqual(result, {"TNH2600105", "TNP2600099"})
+
+    def test_empty_scan_hides_nothing(self):
+        with patch.object(app, "GoogleAccountMailer") as mailer_cls:
+            mailer_cls.return_value.is_configured.return_value = True
+            mailer_cls.return_value.get_handled_tenders.return_value = {}
+
+            result = app.get_processed_tender_numbers()
+
+        self.assertEqual(result, set())
+
+    def test_each_reference_is_reported_with_the_mailbox_it_was_found_in(self):
+        """A wrong match has to be visible in the output, not silently hidden."""
+        with patch.object(app, "GoogleAccountMailer") as mailer_cls:
+            mailer_cls.return_value.is_configured.return_value = True
+            mailer_cls.return_value.get_handled_tenders.return_value = {
+                "TNH2600105": ["Inbox", "Sent"],
+            }
+
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                app.get_processed_tender_numbers()
+
+        output = buffer.getvalue()
+        self.assertIn("TNH2600105", output)
+        self.assertIn("Inbox, Sent", output)
 
 
 class TestOfferDocumentDownload(unittest.TestCase):

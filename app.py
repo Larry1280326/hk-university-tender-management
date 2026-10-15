@@ -27,9 +27,7 @@ from cli_views import (
     display_welcome_banner,
     display_tender_table,
     display_invited_tenders,
-    display_received_emails_table,
     display_draft_preview,
-    display_email_detail,
 )
 
 
@@ -358,86 +356,6 @@ def draft_emails_for_tenders(drafts: List[TenderEmailDraft]) -> None:
         console.print("\n[green]Done! EML files exported to output_drafts directory.[/green]")
 
 
-def handle_read_mailbox(limit: int = 50, known_tenders: Optional[List[str]] = None) -> None:
-    """Fetch HKUST-related emails, display them, and inspect one on demand.
-
-    Read-only: it never applies or removes Gmail labels.
-    """
-    if not config.GMAIL_APP_PASSWORD:
-        console.print(
-            "[bold red][!] GMAIL_APP_PASSWORD is not configured in .env![/bold red]\n"
-            "Please generate an App Password at https://myaccount.google.com/apppasswords"
-        )
-        return
-
-    mailer = GoogleAccountMailer()
-    target_folder = mailer.find_tender_tag_folder() or "INBOX"
-
-    console.print(
-        f"[*] Connecting to IMAP for [cyan]{mailer.username}[/cyan] (Scanning: [bold yellow]{target_folder}[/bold yellow])...",
-        style="cyan",
-    )
-    try:
-        with console.status(f"[cyan]Scanning {target_folder}...", spinner="dots"):
-            emails = mailer.fetch_hkust_tender_emails(
-                folder=target_folder, limit=limit, known_tenders=known_tenders
-            )
-    except Exception as e:
-        console.print(f"[bold red]Failed to read mailbox:[/bold red] {e}")
-        return
-
-    if not emails:
-        console.print(f"[yellow]No emails found in folder '{target_folder}'.[/yellow]")
-        return
-
-    display_received_emails_table(emails)
-
-    # Interactive action loop. Read-only: no label is applied or removed.
-    while True:
-        action = questionary.select(
-            "What would you like to do with these emails?",
-            choices=[
-                "1. View snippet / details of an email",
-                f"2. Switch folder (currently: '{target_folder}')",
-                "3. Back to Main Menu / Exit",
-            ],
-        ).ask()
-
-        if not action or action.startswith("3"):
-            break
-
-        if action.startswith("1"):
-            choices = [
-                questionary.Choice(
-                    title=f"#{idx} [{em.tender_no or 'No Ref'}] {em.subject[:50]}... (From: {em.sender[:20]})",
-                    value=em,
-                )
-                for idx, em in enumerate(emails, 1)
-            ]
-            selected_em = questionary.select("Select email to view:", choices=choices).ask()
-            if selected_em:
-                display_email_detail(selected_em)
-
-        elif action.startswith("2"):
-            new_folder = questionary.select(
-                "Select folder to scan:",
-                choices=[
-                    "HKUST Tenders (Labelled Mail - Ultra Fast)",
-                    "INBOX (General Inbox)",
-                ],
-            ).ask()
-            if new_folder:
-                # Resolve the label folder rather than assuming its name; Gmail localizes
-                # system names, and the label itself is renameable.
-                tag_folder = mailer.find_tender_tag_folder()
-                target_folder = tag_folder if "HKUST" in new_folder and tag_folder else "INBOX"
-                with console.status(f"[cyan]Scanning {target_folder}...", spinner="dots"):
-                    emails = mailer.fetch_hkust_tender_emails(
-                        folder=target_folder, limit=limit, known_tenders=known_tenders
-                    )
-                display_received_emails_table(emails)
-
-
 def get_processed_tender_numbers() -> Set[str]:
     """Scan Inbox, Drafts and Sent for tenders already dealt with, and report where each was found.
 
@@ -478,13 +396,12 @@ def interactive_menu():
         "HKUST Workflow - Select an option:",
         choices=[
             "1. Scrape HKUST Tenders & Draft Emails",
-            "2. Read Mailbox (HKUST Tenders & Replies)",
-            "3. Test Google Account Connection",
-            "4. Exit",
+            "2. Test Google Account Connection",
+            "3. Exit",
         ],
     ).ask()
 
-    if not choice or choice.startswith("4"):
+    if not choice or choice.startswith("3"):
         console.print("[yellow]Exiting.[/yellow]")
         return
 
@@ -492,9 +409,6 @@ def interactive_menu():
         run_tender_workflow(headless=True)
 
     elif choice.startswith("2"):
-        handle_read_mailbox()
-
-    elif choice.startswith("3"):
         console.print(f"[*] Testing Google App Password connection for {config.GMAIL_USER}...", style="cyan")
         mailer = GoogleAccountMailer()
         success, msg = mailer.test_connection()
@@ -511,9 +425,7 @@ def parse_cli_args():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--test", action="store_true", help="Test Google IMAP / App Password connection")
-    parser.add_argument("--read-mail", action="store_true", help="Read mailbox and inspect HKUST tender emails")
     parser.add_argument("--visible", action="store_true", help="Run scraper with visible Chromium browser")
-    parser.add_argument("--limit", type=int, default=50, help="Maximum number of emails to scan")
     return parser.parse_args()
 
 
@@ -529,10 +441,6 @@ def main():
             status_style = "bold green" if success else "bold red"
             prefix = "[OK]" if success else "[!]"
             console.print(f"[{status_style}]{prefix} {msg}[/{status_style}]")
-        return
-
-    if args.read_mail:
-        handle_read_mailbox(limit=args.limit)
         return
 
     if args.visible:
