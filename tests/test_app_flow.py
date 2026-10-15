@@ -1,5 +1,5 @@
 """Tests for the flows driven from app.py: the menu loop, the pre-scrape mailbox check,
-and select -> download.
+tender selection, and select -> download.
 
 Only the invitation table's rows carry documents, so the download prompt must fire for
 those and never for open tenders.
@@ -158,7 +158,81 @@ class TestOfferDocumentDownload(unittest.TestCase):
             app._offer_document_download([invited_tender()], set(), headless=True)
 
 
+class TestSelectSuitableTenders(unittest.TestCase):
+    """Going back and picking nothing must stay distinguishable.
+
+    The caller says "Returning to the main menu" for one and "No tenders selected" for
+    the other, so collapsing both into an empty list would lose the difference.
+    """
+
+    def test_back_returns_none(self):
+        with patch.object(app, "questionary") as q:
+            q.select.return_value.ask.return_value = "3. Back"
+
+            self.assertIsNone(app.select_suitable_tenders([open_tender()]))
+
+    def test_an_interrupted_prompt_returns_none(self):
+        with patch.object(app, "questionary") as q:
+            q.select.return_value.ask.return_value = None
+
+            self.assertIsNone(app.select_suitable_tenders([open_tender()]))
+
+    def test_confirming_an_empty_checklist_returns_an_empty_list(self):
+        with patch.object(app, "questionary") as q:
+            q.select.return_value.ask.return_value = (
+                "1. Interactive Checklist (pick individual tenders)"
+            )
+            q.checkbox.return_value.ask.return_value = []
+
+            self.assertEqual(app.select_suitable_tenders([open_tender()]), [])
+
+    def test_select_all_returns_every_tender(self):
+        tender = open_tender()
+        with patch.object(app, "questionary") as q:
+            q.select.return_value.ask.return_value = "2. Select All tenders"
+
+            selected = app.select_suitable_tenders([tender])
+
+        self.assertEqual([t.tender_no for t in selected], [tender.tender_no])
+
+    def test_nothing_to_choose_from_returns_none(self):
+        with patch.object(app, "questionary"):
+            self.assertIsNone(app.select_suitable_tenders([]))
+
+
 class TestSelectionFlow(unittest.TestCase):
+
+    def test_going_back_from_selection_names_the_destination(self):
+        with patch.object(app, "select_suitable_tenders", return_value=None):
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                app.handle_tender_selection_and_drafting([open_tender()])
+
+        self.assertIn("Returning to the main menu", buffer.getvalue())
+
+    def test_confirming_an_empty_checklist_says_nothing_was_selected(self):
+        """Distinct from going back: here the user chose, and chose nothing."""
+        with patch.object(app, "select_suitable_tenders", return_value=[]):
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                app.handle_tender_selection_and_drafting([open_tender()])
+
+        output = buffer.getvalue().lower()
+        self.assertIn("no tenders selected", output)
+        self.assertIn("returning to the main menu", output)
+
+    def test_going_back_from_the_draft_menu_names_the_destination(self):
+        with patch.object(app, "select_suitable_tenders", return_value=[open_tender()]), patch.object(
+            app, "questionary"
+        ) as q:
+            q.select.return_value.ask.return_value = "3. Back to Main Menu"
+
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                app.handle_tender_selection_and_drafting([open_tender()])
+
+        self.assertIn("Returning to the main menu", buffer.getvalue())
+
 
     def test_open_tender_selection_never_prompts_for_download(self):
         with patch.object(app, "select_suitable_tenders", return_value=[open_tender()]), patch.object(

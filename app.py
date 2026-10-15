@@ -143,10 +143,15 @@ def _tender_choice_title(t: TenderNotice) -> str:
 def select_suitable_tenders(
     tenders: List[TenderNotice],
     preselected_refs: Optional[set] = None,
-) -> List[TenderNotice]:
-    """Interactive checklist or select all for tender selection."""
+) -> Optional[List[TenderNotice]]:
+    """Interactive checklist or select all for tender selection.
+
+    Returns the chosen tenders, an empty list when the checklist was confirmed with
+    nothing ticked, and None when the user went back without choosing. The caller
+    reports the last two differently, so they must not collapse into one value.
+    """
     if not tenders:
-        return []
+        return None
 
     mode = questionary.select(
         "How would you like to select suitable tenders?",
@@ -158,7 +163,7 @@ def select_suitable_tenders(
     ).ask()
 
     if not mode or mode.startswith("3"):
-        return []
+        return None
 
     if mode.startswith("1"):
         invited = [t for t in tenders if t.invited]
@@ -191,7 +196,7 @@ def select_suitable_tenders(
     if mode.startswith("2"):
         return tenders
 
-    return []
+    return None
 
 
 def _offer_document_download(
@@ -253,8 +258,12 @@ def handle_tender_selection_and_drafting(
         preselected_refs = {t.tender_no for t in current_selected} if current_selected else None
         current_selected = select_suitable_tenders(tenders, preselected_refs=preselected_refs)
 
+        if current_selected is None:
+            console.print("[cyan]Returning to the main menu...[/cyan]")
+            return
+
         if not current_selected:
-            console.print("[yellow]No tenders selected.[/yellow]")
+            console.print("[yellow]No tenders selected - returning to the main menu.[/yellow]")
             return
 
         # Invitations carry documents; only open tenders have a contact to email.
@@ -294,7 +303,7 @@ def handle_tender_selection_and_drafting(
         ).ask()
 
         if not action or action.startswith("3"):
-            console.print("[yellow]Cancelled draft creation.[/yellow]")
+            console.print("[cyan]Returning to the main menu...[/cyan]")
             return
 
         if action.startswith("2"):

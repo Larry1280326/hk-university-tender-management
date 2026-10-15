@@ -166,4 +166,4 @@ To run the automated verification suite:
 uv run python -m unittest discover -s tests -v
 ```
 
-All 88 tests verify mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, the interactive menu loop, regex extraction, and `.env` dynamic loading without requiring network access.
+All 96 tests verify mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, the interactive menu loop, tender selection, regex extraction, and `.env` dynamic loading without requiring network access.
