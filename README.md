@@ -90,9 +90,10 @@ uv run python app.py
 
 #### Interactive Main Menu:
 - **1. Scrape HKUST Tenders & Draft Emails**: Headless scraping + interactive tender checklist + Gmail draft creation with automatic tagging.
-- **2. Read Mailbox & Track HKUST Replies / Apply Tags**: Reads your Gmail inbox, identifies HKUST replies and tender references from subject lines, and applies nested tags.
-- **3. Test Google Account Connection**: Verifies Google App Password and IMAP connection.
-- **4. Exit**
+- **2. Test Google Account Connection**: Verifies Google App Password and IMAP connection.
+- **3. Exit**
+
+Mailbox reading is available through the `--read-mail` and `--tag-tenders` flags below.
 
 #### Direct Command Line Flags:
 

@@ -376,13 +376,12 @@ def interactive_menu():
         "HKUST Workflow - Select an option:",
         choices=[
             "1. Scrape HKUST Tenders & Draft Emails",
-            "2. Read Mailbox & Track HKUST Replies / Apply Tags",
-            "3. Test Google Account Connection",
-            "4. Exit",
+            "2. Test Google Account Connection",
+            "3. Exit",
         ],
     ).ask()
 
-    if not choice or choice.startswith("4"):
+    if not choice or choice.startswith("3"):
         console.print("[yellow]Exiting.[/yellow]")
         return
 
@@ -402,9 +401,6 @@ def interactive_menu():
                 console.print("[yellow]No active tenders found or failed to fetch.[/yellow]")
 
     elif choice.startswith("2"):
-        handle_read_and_tag_mailbox(auto_tag=False)
-
-    elif choice.startswith("3"):
         console.print(f"[*] Testing Google App Password connection for {config.GMAIL_USER}...", style="cyan")
         mailer = GoogleAccountMailer()
         success, msg = mailer.test_connection()
