@@ -3,14 +3,24 @@
 import re
 from dataclasses import dataclass, asdict
 from typing import List, Optional, Dict, Any, Callable, Tuple, Set
-from playwright.sync_api import Page
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
 import config
+from scraper import browser_utils
 from mailer.email_parser import normalize_tender_ref
 
 EMAIL_REGEX = re.compile(r"([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)", re.IGNORECASE)
 CONTACT_PERSON_REGEX = re.compile(r"Contact\s+Person\s*[:：]\s*([^\n\r]+)", re.IGNORECASE)
 PHONE_REGEX = re.compile(r"(\+?852[-\s]?)?[2-9]\d{3}[-\s]?\d{4}")
+
+# Readiness signals: the element the code immediately following each wait touches.
+DIRECTORY_ROW_SELECTOR = "table tbody tr"
+DETAIL_READY_SELECTOR = (
+    "table tr:has-text('Enquiry'), table tr:has-text('Request for Tender Document')"
+)
+
+
 @dataclass
 class TenderNotice:
     """Structured data for an active HKUST Tender notice."""
@@ -36,6 +46,15 @@ class TenderParser:
 
     def __init__(self, page: Page):
         self.page = page
+
+    def _on_directory_page(self) -> bool:
+        """Compare URLs tolerantly, ignoring query, fragment, and trailing slash.
+
+        The portal appends a query string, so exact string equality would force a
+        full re-navigation for every row instead of a cheap go_back.
+        """
+        normalise = lambda url: url.split("?")[0].split("#")[0].rstrip("/")
+        return normalise(self.page.url) == normalise(self.TENDER_NOTICE_URL)
 
     def _parse_enquiry_details(self) -> Tuple[str, str, str]:
         """Extract contact person, email, and raw enquiry text from current detail page."""
@@ -90,7 +109,15 @@ class TenderParser:
                     if norm:
                         normalized_existing.add(norm)
 
-        self.page.goto(self.TENDER_NOTICE_URL, wait_until="networkidle")
+        if not browser_utils.navigate(
+            self.page,
+            self.TENDER_NOTICE_URL,
+            ready_selector=DIRECTORY_ROW_SELECTOR,
+            allow_missing=True,
+            label="tender-directory",
+        ):
+            print("[!] No tender rows found on the directory page.")
+            return []
 
         table = self.page.locator("table").first
         rows = table.locator("tbody tr").all()
@@ -100,13 +127,25 @@ class TenderParser:
 
         for idx in range(total_rows):
             # Ensure on directory page; prefer fast go_back
-            if self.page.url != self.TENDER_NOTICE_URL:
+            if not self._on_directory_page():
                 try:
-                    self.page.go_back(wait_until="networkidle")
-                except Exception:
-                    pass
-                if self.page.url != self.TENDER_NOTICE_URL:
-                    self.page.goto(self.TENDER_NOTICE_URL, wait_until="networkidle")
+                    self.page.go_back(
+                        wait_until="domcontentloaded", timeout=config.HKUST_NAV_TIMEOUT_MS
+                    )
+                    if not self._on_directory_page():
+                        raise PlaywrightTimeoutError("go_back did not return to the directory")
+                    self.page.wait_for_selector(
+                        DIRECTORY_ROW_SELECTOR,
+                        state="attached",
+                        timeout=config.HKUST_READY_TIMEOUT_MS,
+                    )
+                except (PlaywrightTimeoutError, PlaywrightError):
+                    browser_utils.navigate(
+                        self.page,
+                        self.TENDER_NOTICE_URL,
+                        ready_selector=DIRECTORY_ROW_SELECTOR,
+                        label="tender-directory-return",
+                    )
 
             table = self.page.locator("table").first
             row = table.locator("tbody tr").nth(idx)
@@ -135,11 +174,18 @@ class TenderParser:
 
             try:
                 link = cells[2].locator("a").first
-                link.click()
-                self.page.wait_for_load_state("networkidle")
+                link.click(timeout=config.HKUST_DETAIL_TIMEOUT_MS)
+                self.page.wait_for_load_state(
+                    "domcontentloaded", timeout=config.HKUST_NAV_TIMEOUT_MS
+                )
+                self.page.wait_for_selector(
+                    DETAIL_READY_SELECTOR,
+                    state="attached",
+                    timeout=config.HKUST_DETAIL_TIMEOUT_MS,
+                )
                 contact_person, contact_email, raw_enquiry = self._parse_enquiry_details()
-            except Exception:
-                pass
+            except (PlaywrightTimeoutError, PlaywrightError) as e:
+                print(f"[!] Detail page for {tender_no} not parsed: {type(e).__name__}: {e}")
 
             tenders.append(
                 TenderNotice(

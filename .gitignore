@@ -17,3 +17,4 @@ output_drafts/
 
 # Certificates & Assets
 assets/*.pdf
+assets/debug/

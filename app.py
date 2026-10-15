@@ -71,9 +71,12 @@ def run_scrape_workflow(
 
             return tenders
         except Exception as e:
-            console.print(f"[bold red]Scraper Error:[/bold red] {e}")
+            console.print(f"[bold red]Scraper Error:[/bold red] {type(e).__name__}: {e}")
+            if config.HKUST_DEBUG_ARTIFACTS:
+                console.print_exception(show_locals=False)
             return []
         finally:
+            context.close()
             browser.close()
 
 

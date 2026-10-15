@@ -24,6 +24,58 @@ HKUST_VENDOR_ID = os.getenv("HKUST_VENDOR_ID", "")
 HKUST_PASSWORD = os.getenv("HKUST_PASSWORD", "")
 
 
+def _env_int(name: str, default: int) -> int:
+    """Read an int from the environment, falling back to the default on a bad value."""
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"[!] {name}={raw!r} is not an integer; using default {default}.")
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    """Read a float from the environment, falling back to the default on a bad value."""
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        print(f"[!] {name}={raw!r} is not a number; using default {default}.")
+        return default
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    """Read a boolean from the environment, falling back to the default on a bad value."""
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    print(f"[!] {name}={raw!r} is not a boolean; using default {default}.")
+    return default
+
+
+# Navigation tuning. The HKUST login page loads Google reCAPTCHA from an external
+# host, and that request is slow when the link is busy, so waiting for network idle
+# is unreliable there. These bound every wait explicitly instead of inheriting
+# Playwright's 30s default.
+HKUST_NAV_TIMEOUT_MS = _env_int("HKUST_NAV_TIMEOUT_MS", 15000)
+HKUST_READY_TIMEOUT_MS = _env_int("HKUST_READY_TIMEOUT_MS", 15000)
+HKUST_SCRIPT_TIMEOUT_MS = _env_int("HKUST_SCRIPT_TIMEOUT_MS", 30000)
+HKUST_POST_LOGIN_TIMEOUT_MS = _env_int("HKUST_POST_LOGIN_TIMEOUT_MS", 20000)
+HKUST_DETAIL_TIMEOUT_MS = _env_int("HKUST_DETAIL_TIMEOUT_MS", 20000)
+HKUST_NAV_ATTEMPTS = _env_int("HKUST_NAV_ATTEMPTS", 3)
+HKUST_NAV_BACKOFF_SECONDS = _env_float("HKUST_NAV_BACKOFF_SECONDS", 2.0)
+HKUST_RETRY_ON_NET_ERRORS = _env_flag("HKUST_RETRY_ON_NET_ERRORS", True)
+HKUST_DEBUG_ARTIFACTS = _env_flag("HKUST_DEBUG_ARTIFACTS", True)
+
+
 # Company Information (Configured solely via .env)
 COMPANY_NAME = os.getenv("COMPANY_NAME", "")
 CONTACT_PERSON_NAME = os.getenv("CONTACT_PERSON_NAME", "")

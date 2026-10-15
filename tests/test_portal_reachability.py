@@ -3,7 +3,10 @@
 import os
 import unittest
 from playwright.sync_api import sync_playwright
+
 import config
+from scraper import browser_utils
+from scraper.auth import HKUSTAuthManager, LOGIN_READY_SELECTOR
 
 
 class TestPortalReachability(unittest.TestCase):
@@ -16,32 +19,52 @@ class TestPortalReachability(unittest.TestCase):
     def test_portal_flow(self):
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
+            try:
+                # Use the app's own context so the viewport and default timeouts
+                # under test match production.
+                context = HKUSTAuthManager().get_context(browser)
+                page = context.new_page()
 
-            page.goto(config.HKUST_WELCOME_URL, wait_until="networkidle")
-            title = page.title()
-            self.assertIn("HKUST", title, f"Unexpected page title: {title}")
+                browser_utils.navigate(
+                    page,
+                    config.HKUST_WELCOME_URL,
+                    ready_selector="#tncChkBox, #vendorId",
+                    label="welcome",
+                )
+                title = page.title()
+                self.assertIn("HKUST", title, f"Unexpected page title: {title}")
 
-            # Check Terms box
-            self.assertGreater(page.locator("#tncChkBox").count(), 0, "Terms checkbox #tncChkBox not found")
-            tnc_box = page.locator("#tncChkBox")
-            tnc_box.check()
-            self.assertTrue(tnc_box.is_checked(), "Failed to check terms checkbox")
+                # Terms may already have been accepted, in which case the portal
+                # goes straight to the login form and there is nothing to tick.
+                if page.locator("#tncChkBox").count() > 0:
+                    tnc_box = page.locator("#tncChkBox")
+                    tnc_box.check()
+                    self.assertTrue(tnc_box.is_checked(), "Failed to check terms checkbox")
+                    page.click("#submitBtn", timeout=config.HKUST_READY_TIMEOUT_MS)
 
-            # Submit Terms
-            page.click("#submitBtn")
-            page.wait_for_load_state("networkidle")
+                page.wait_for_selector("#vendorId:visible", timeout=config.HKUST_READY_TIMEOUT_MS)
 
-            # Verify navigation to logon page
-            is_login_page = "/td_login" in page.url or page.locator("#vendorId").count() > 0
-            self.assertTrue(is_login_page, "Did not reach logon page after accepting terms")
+                is_login_page = "/td_login" in page.url or page.locator("#vendorId").count() > 0
+                self.assertTrue(is_login_page, "Did not reach logon page after accepting terms")
 
-            vendor_input = page.locator("#vendorId")
-            password_input = page.locator("#password")
-            self.assertTrue(vendor_input.is_visible(), "Vendor ID input not visible")
-            self.assertTrue(password_input.is_visible(), "Password input not visible")
+                self.assertTrue(
+                    page.locator("#vendorId").is_visible(), "Vendor ID input not visible"
+                )
+                self.assertTrue(
+                    page.locator("#password").is_visible(), "Password input not visible"
+                )
 
-            browser.close()
+                # The portal's login handler calls grecaptcha.getResponse() before
+                # it builds the request, so the form is unusable until this loads.
+                browser_utils.wait_for_predicate(
+                    page,
+                    browser_utils.is_recaptcha_callable,
+                    timeout_ms=config.HKUST_SCRIPT_TIMEOUT_MS,
+                    label="the reCAPTCHA library",
+                    url=config.HKUST_LOGIN_URL,
+                )
+            finally:
+                browser.close()
 
 
 if __name__ == "__main__":
