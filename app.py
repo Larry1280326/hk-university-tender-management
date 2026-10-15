@@ -153,7 +153,7 @@ def select_suitable_tenders(
         choices=[
             "1. Interactive Checklist (pick individual tenders)",
             "2. Select All tenders",
-            "3. Cancel / Exit",
+            "3. Back",
         ],
     ).ask()
 
@@ -289,7 +289,7 @@ def handle_tender_selection_and_drafting(
             choices=[
                 f"1. Yes, Create {len(drafts)} Drafts in Gmail",
                 "2. Back to Selection (Modify which tenders are selected)",
-                "3. Cancel / Exit",
+                "3. Back to Main Menu",
             ],
         ).ask()
 
@@ -390,8 +390,12 @@ def get_processed_tender_numbers() -> Set[str]:
     return set(handled)
 
 
-def interactive_menu():
-    """Display main CLI menu and route user choices."""
+def interactive_menu() -> bool:
+    """Show the main menu once and route the choice.
+
+    Returns whether the menu should be shown again, so that a run the user cancels
+    lands back here instead of taking the whole program down with it: only Exit ends it.
+    """
     choice = questionary.select(
         "HKUST Workflow - Select an option:",
         choices=[
@@ -401,9 +405,11 @@ def interactive_menu():
         ],
     ).ask()
 
+    # questionary answers None when the prompt itself is interrupted, which is also a
+    # request to leave rather than to carry on.
     if not choice or choice.startswith("3"):
         console.print("[yellow]Exiting.[/yellow]")
-        return
+        return False
 
     if choice.startswith("1"):
         run_tender_workflow(headless=True)
@@ -416,6 +422,8 @@ def interactive_menu():
             console.print(f"[bold green][OK] {msg}[/bold green]")
         else:
             console.print(f"[bold red][!] {msg}[/bold red]")
+
+    return True
 
 
 def parse_cli_args():
@@ -447,7 +455,10 @@ def main():
         run_tender_workflow(headless=False)
         return
 
-    interactive_menu()
+    # One process, many actions: cancelling a scrape returns to this menu rather than
+    # closing the program, and only Exit unwinds the loop.
+    while interactive_menu():
+        pass
 
 
 

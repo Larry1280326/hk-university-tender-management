@@ -1,4 +1,5 @@
-"""Tests for the flows driven from app.py: the pre-scrape mailbox check and select -> download.
+"""Tests for the flows driven from app.py: the menu loop, the pre-scrape mailbox check,
+and select -> download.
 
 Only the invitation table's rows carry documents, so the download prompt must fire for
 those and never for open tenders.
@@ -163,7 +164,7 @@ class TestSelectionFlow(unittest.TestCase):
         with patch.object(app, "select_suitable_tenders", return_value=[open_tender()]), patch.object(
             app, "_offer_document_download"
         ) as offer, patch.object(app, "display_draft_preview"), patch.object(app, "questionary") as q:
-            q.select.return_value.ask.return_value = "3. Cancel / Exit"
+            q.select.return_value.ask.return_value = "3. Back to Main Menu"
 
             app.handle_tender_selection_and_drafting([open_tender()])
 
@@ -194,6 +195,60 @@ class TestChoiceLabels(unittest.TestCase):
         tender.contact_email = ""
 
         self.assertNotIn("Sir/Madam", app._tender_choice_title(tender))
+
+
+class TestMainMenuLoop(unittest.TestCase):
+    """The menu holds the session open, so a cancelled run must not close the program."""
+
+    def test_exit_closes_the_menu(self):
+        with patch.object(app, "questionary") as q:
+            q.select.return_value.ask.return_value = "3. Exit"
+
+            self.assertFalse(app.interactive_menu())
+
+    def test_interrupting_the_prompt_also_closes_the_menu(self):
+        """questionary answers None on Ctrl-C, a request to leave rather than to loop."""
+        with patch.object(app, "questionary") as q:
+            q.select.return_value.ask.return_value = None
+
+            self.assertFalse(app.interactive_menu())
+
+    def test_running_a_workflow_leaves_the_menu_open(self):
+        with patch.object(app, "questionary") as q, patch.object(
+            app, "run_tender_workflow"
+        ) as workflow:
+            q.select.return_value.ask.return_value = "1. Scrape HKUST Tenders & Draft Emails"
+
+            self.assertTrue(app.interactive_menu())
+
+        workflow.assert_called_once()
+
+    def test_testing_the_connection_leaves_the_menu_open(self):
+        with patch.object(app, "questionary") as q, patch.object(app, "GoogleAccountMailer") as mailer:
+            q.select.return_value.ask.return_value = "2. Test Google Account Connection"
+            mailer.return_value.test_connection.return_value = (True, "ok")
+
+            self.assertTrue(app.interactive_menu())
+
+        mailer.return_value.test_connection.assert_called_once()
+
+    def test_main_reshows_the_menu_until_exit(self):
+        """Cancelling a scrape must land back on the menu, not drop the user to the shell."""
+        answers = iter([
+            "1. Scrape HKUST Tenders & Draft Emails",
+            "1. Scrape HKUST Tenders & Draft Emails",
+            "3. Exit",
+        ])
+        with patch("sys.argv", ["app.py"]), patch.object(
+            app, "display_welcome_banner"
+        ), patch.object(app, "questionary") as q, patch.object(
+            app, "run_tender_workflow"
+        ) as workflow:
+            q.select.return_value.ask.side_effect = lambda: next(answers)
+
+            app.main()
+
+        self.assertEqual(workflow.call_count, 2)
 
 
 if __name__ == "__main__":

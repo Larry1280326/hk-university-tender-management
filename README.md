@@ -96,6 +96,9 @@ uv run python app.py
 - **2. Test Google Account Connection**: Verifies Google App Password and IMAP connection.
 - **3. Exit**
 
+The menu stays up until you choose **3. Exit**, so cancelling a scrape — or finishing one —
+returns you here rather than closing the program. Ctrl-C at the prompt also exits.
+
 #### Direct Command Line Flags:
 
 ```bash
@@ -163,4 +166,4 @@ To run the automated verification suite:
 uv run python -m unittest discover -s tests -v
 ```
 
-All 83 tests verify mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, regex extraction, and `.env` dynamic loading without requiring network access.
+All 88 tests verify mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, the interactive menu loop, regex extraction, and `.env` dynamic loading without requiring network access.
