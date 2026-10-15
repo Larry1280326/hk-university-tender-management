@@ -10,9 +10,10 @@ import imaplib
 import smtplib
 import time
 from contextlib import contextmanager
+from datetime import date, timedelta
 from email import message_from_bytes
 import re
-from typing import Optional, Tuple, List, Dict, Any, Generator, Set
+from typing import Optional, Tuple, List, Dict, Generator, Set
 
 import config
 from mailer.template import TenderEmailDraft
@@ -22,7 +23,7 @@ from mailer.email_parser import (
     decode_mime_words,
     extract_tender_no_from_text,
     extract_tender_name_from_text,
-    extract_all_tender_refs,
+    extract_tender_refs_from_subject,
     parse_gmail_labels,
 )
 
@@ -70,7 +71,11 @@ class GoogleAccountMailer:
         try:
             mail.login(self.username, self.app_password)
             if folder:
-                self._select_folder(mail, folder, readonly=readonly)
+                status, _ = mail.select(f'"{folder}"', readonly=readonly)
+                if status != "OK":
+                    status, _ = mail.select(folder, readonly=readonly)
+                    if status != "OK":
+                        raise RuntimeError(f"Could not open mailbox folder: {folder}")
             yield mail
         finally:
             try:
@@ -78,31 +83,33 @@ class GoogleAccountMailer:
             except Exception:
                 pass
 
-    def _select_folder(
+    def _find_folder_by_flag(
         self,
         mail: imaplib.IMAP4_SSL,
-        folder: str,
-        readonly: bool = False,
-    ) -> None:
-        """Select a mailbox, retrying unquoted for names Gmail refuses to quote."""
-        status, _ = mail.select(f'"{folder}"', readonly=readonly)
-        if status != "OK":
-            status, _ = mail.select(folder, readonly=readonly)
-            if status != "OK":
-                raise RuntimeError(f"Could not open mailbox folder: {folder}")
+        flag: str,
+        default: Optional[str] = None,
+    ) -> Optional[str]:
+        """Resolve a Gmail system folder by its IMAP attribute, e.g. ``\\Sent``.
 
-    def _find_drafts_folder(self, mail: imaplib.IMAP4_SSL) -> str:
-        """Auto-detect the Gmail Drafts mailbox across all account languages."""
+        Folder names cannot be relied on: Gmail localizes them per account language, so
+        one account's Sent mailbox is ``[Gmail]/Sent Mail`` while another's is
+        ``[Gmail]/&XfJT0ZCuTvY-``. The flag is matched only in the attribute section,
+        since a folder *name* could contain the same text.
+        """
         typ, mailboxes = mail.list()
         if typ == "OK" and mailboxes:
             for mb in mailboxes:
-                mb_str = mb.decode("utf-8", errors="ignore")
-                if "\\Drafts" in mb_str:
-                    parts = mb_str.split(' "/" ')
-                    if len(parts) > 1:
-                        return parts[-1].strip().strip('"')
+                attributes, delimiter, name = mb.decode(
+                    "utf-8", errors="ignore"
+                ).partition(' "/" ')
+                if delimiter and flag in attributes:
+                    return name.strip().strip('"')
 
-        return "[Gmail]/Drafts"
+        return default
+
+    def _find_drafts_folder(self, mail: imaplib.IMAP4_SSL) -> str:
+        """Auto-detect the Gmail Drafts mailbox across all account languages."""
+        return self._find_folder_by_flag(mail, "\\Drafts", default="[Gmail]/Drafts")
 
     def save_draft(
         self,
@@ -207,161 +214,190 @@ class GoogleAccountMailer:
         except Exception as e:
             return False, f"Connection failed: {e}"
 
-    def _list_mailboxes(self, mail: imaplib.IMAP4_SSL) -> List[str]:
-        """List mailbox / label names from an already-open session."""
-        typ, mailboxes = mail.list()
-        names: List[str] = []
-        if typ == "OK" and mailboxes:
-            for mb in mailboxes:
-                mb_str = mb.decode("utf-8", errors="ignore")
-                parts = mb_str.split(' "/" ')
-                if len(parts) > 1:
-                    names.append(parts[-1].strip().strip('"'))
-        return names
-
     def list_mailboxes(self) -> List[str]:
         """List all available mailbox folder / label names in the Gmail account."""
         with self.imap_session() as mail:
-            return self._list_mailboxes(mail)
-
-    def _find_tender_tag_folder(self, mail: imaplib.IMAP4_SSL) -> Optional[str]:
-        """Find the HKUST Tenders tag folder within an already-open session."""
-        target = config.HKUST_MAIL_TAG
-        mailboxes = self._list_mailboxes(mail)
-        for mb in mailboxes:
-            if mb.lower() == target.lower():
-                return mb
-        for mb in mailboxes:
-            if mb.lower() in ("hkust tenders", "hkust-tenders", "hkust_tenders"):
-                return mb
-        return None
+            typ, mailboxes = mail.list()
+            names = []
+            if typ == "OK" and mailboxes:
+                for mb in mailboxes:
+                    mb_str = mb.decode("utf-8", errors="ignore")
+                    parts = mb_str.split(' "/" ')
+                    if len(parts) > 1:
+                        names.append(parts[-1].strip().strip('"'))
+            return names
 
     def find_tender_tag_folder(self) -> Optional[str]:
         """Find the HKUST Tenders tag folder if it exists in Gmail."""
         try:
-            with self.imap_session() as mail:
-                return self._find_tender_tag_folder(mail)
+            mailboxes = self.list_mailboxes()
+            target = config.HKUST_MAIL_TAG
+            for mb in mailboxes:
+                if mb.lower() == target.lower():
+                    return mb
+            for mb in mailboxes:
+                if mb.lower() in ("hkust tenders", "hkust-tenders", "hkust_tenders"):
+                    return mb
         except Exception:
             pass
         return None
 
-    def _search_uids(
-        self,
-        mail: imaplib.IMAP4_SSL,
-        search_criteria: str = "ALL",
-    ) -> List[bytes]:
-        """Return the UIDs matching an IMAP search in the selected mailbox."""
-        typ, data = mail.uid("SEARCH", None, search_criteria)
-        if typ != "OK" or not data or not data[0]:
-            return []
-        return data[0].split()
+    # Mailboxes examined to decide whether a tender has already been dealt with, in the
+    # order the report lists them.
+    HANDLED_SCAN_FOLDERS = ("Inbox", "Drafts", "Sent")
 
-    def _fetch_emails(
-        self,
-        mail: imaplib.IMAP4_SSL,
-        uids: List[bytes],
-        limit: Optional[int] = None,
-        known_tenders: Optional[List[str]] = None,
-    ) -> List[TenderReceivedEmail]:
-        """Batch-fetch subject/from/date headers plus Gmail labels for the given UIDs.
+    # Gmail returns a 500-subject FETCH in about a fifth of the time 100-subject batches
+    # take, so the round-trip count dominates the cost of this scan.
+    SUBJECT_FETCH_BATCH = 500
 
-        The single header-read path: one batched UID FETCH covers every message,
-        so no message body is ever downloaded and only one round trip is spent.
-        Pass limit=None to read every UID.
+    def _select_folder(self, mail: imaplib.IMAP4_SSL, folder: str) -> None:
+        """Open ``folder`` read-only, retrying with the bare (unquoted) name.
+
+        Gmail rejects the quoted spelling of some localized names, so both are tried the
+        same way :meth:`imap_session` does.
         """
-        if not uids:
-            return []
+        for candidate in (f'"{folder}"', folder):
+            status, _ = mail.select(candidate, readonly=True)
+            if status == "OK":
+                return
+        raise RuntimeError(f"Could not open mailbox folder: {folder}")
 
-        # Newest emails first; limit=None means the whole mailbox
-        selected = uids if limit is None else uids[-limit:]
-        selected = list(reversed(selected))
+    def _scan_selected_folder(self, mail: imaplib.IMAP4_SSL, criteria: str) -> Set[str]:
+        """Tender references in the subject lines of the currently selected mailbox.
 
-        fetch_status, fetch_data = mail.uid(
-            "FETCH",
-            b",".join(selected),
-            "(X-GM-LABELS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])",
-        )
+        Only subjects are fetched. Bodies cost minutes rather than seconds on this
+        mailbox, and a quoted reply body would attribute an unrelated tender to a thread.
+        """
+        refs: Set[str] = set()
+        typ, data = mail.uid("SEARCH", None, criteria)
+        if typ != "OK" or not data or not data[0]:
+            return refs
 
-        if fetch_status != "OK" or not fetch_data:
-            return []
-
-        results: List[TenderReceivedEmail] = []
-        for item in fetch_data:
-            if not isinstance(item, tuple) or len(item) < 2:
+        uids = data[0].split()
+        for start in range(0, len(uids), self.SUBJECT_FETCH_BATCH):
+            batch = b",".join(uids[start : start + self.SUBJECT_FETCH_BATCH])
+            status, fetched = mail.uid(
+                "FETCH", batch, "(BODY.PEEK[HEADER.FIELDS (SUBJECT)])"
+            )
+            if status != "OK" or not fetched:
                 continue
+            for item in fetched:
+                if not isinstance(item, tuple) or len(item) < 2:
+                    continue
+                subject = decode_mime_words(message_from_bytes(item[1]).get("Subject", ""))
+                refs.update(extract_tender_refs_from_subject(subject))
 
-            meta_str = (
-                item[0].decode("utf-8", errors="ignore")
-                if isinstance(item[0], bytes)
-                else str(item[0])
-            )
-            uid_match = re.search(r"UID\s+(\d+)", meta_str)
-            uid_str = uid_match.group(1) if uid_match else "unknown"
+        return refs
 
-            labels = parse_gmail_labels(meta_str)
-            hdr_msg = message_from_bytes(item[1])
+    def get_handled_tenders(self, lookback_days: Optional[int] = None) -> Dict[str, List[str]]:
+        """Map each tender ref to the mailbox(es) it appears in, e.g. ``{"TNH2600105": ["Sent", "Inbox"]}``.
 
-            subject = decode_mime_words(hdr_msg.get("Subject", ""))
-
-            results.append(
-                TenderReceivedEmail(
-                    msg_id=uid_str,
-                    uid=uid_str,
-                    subject=subject,
-                    sender=decode_mime_words(hdr_msg.get("From", "")),
-                    date=decode_mime_words(hdr_msg.get("Date", "")),
-                    body_snippet=subject,
-                    tender_no=extract_tender_no_from_text(subject, known_tenders=known_tenders),
-                    tender_name=extract_tender_name_from_text(subject),
-                    labels=labels,
-                )
-            )
-
-        return results
-
-    def get_existing_tender_numbers(self) -> Set[str]:
-        """Fetch all tender reference numbers from emails tagged with HKUST Tenders in Gmail.
-
-        Resolves the tag folder and reads it within a single IMAP session, then
-        keeps every reference each subject mentions (see extract_all_tender_refs).
+        A tender counts as handled when its reference shows up in a subject line of Inbox,
+        Drafts or Sent within the lookback window -- so a reply you sent counts even though
+        nobody ever labelled it.
         """
         if not self.is_configured():
-            return set()
+            return {}
 
-        existing_numbers: Set[str] = set()
-        try:
-            with self.imap_session() as mail:
-                tender_folder = self._find_tender_tag_folder(mail)
-                if not tender_folder:
-                    return set()
+        days = config.HKUST_MAIL_LOOKBACK_DAYS if lookback_days is None else lookback_days
+        since = (date.today() - timedelta(days=max(1, days))).strftime("%d-%b-%Y")
+        criteria = f"(SINCE {since})"
 
-                self._select_folder(mail, tender_folder, readonly=True)
-                for email_item in self._fetch_emails(mail, self._search_uids(mail, "ALL")):
-                    existing_numbers |= extract_all_tender_refs(email_item.subject)
-        except Exception:
-            pass
+        found: Dict[str, List[str]] = {}
+        # All three mailboxes share one connection: every extra login is another chance to
+        # time out on a slow link, and Gmail caps concurrent IMAP connections.
+        with self.imap_session() as mail:
+            folders = {
+                "Inbox": "INBOX",
+                "Drafts": self._find_folder_by_flag(mail, "\\Drafts", default="[Gmail]/Drafts"),
+                "Sent": self._find_folder_by_flag(mail, "\\Sent", default="[Gmail]/Sent Mail"),
+            }
 
-        return existing_numbers
+            for label in self.HANDLED_SCAN_FOLDERS:
+                folder = folders.get(label)
+                if not folder:
+                    continue
+                try:
+                    self._select_folder(mail, folder)
+                    refs = self._scan_selected_folder(mail, criteria)
+                except Exception as e:
+                    # One unreachable mailbox must not stop the others, or block the scrape.
+                    print(f"[!] Could not scan {label} for already-handled tenders: {type(e).__name__}: {e}")
+                    continue
+                for ref in refs:
+                    found.setdefault(ref, []).append(label)
+
+        return found
 
     def read_emails(
         self,
         folder: str = "INBOX",
         search_criteria: str = "ALL",
-        limit: Optional[int] = None,
+        limit: int = 40,
         known_tenders: Optional[List[str]] = None,
     ) -> List[TenderReceivedEmail]:
-        """Read and parse emails quickly using batch header & label fetching.
-
-        Args:
-            limit: Maximum number of newest messages to read; None reads them all.
-        """
+        """Read and parse emails quickly using batch header & label fetching."""
         with self.imap_session(folder=folder, readonly=True) as mail:
-            return self._fetch_emails(
-                mail,
-                self._search_uids(mail, search_criteria),
-                limit=limit,
-                known_tenders=known_tenders,
+            typ, data = mail.uid("SEARCH", None, search_criteria)
+            if typ != "OK" or not data or not data[0]:
+                return []
+
+            uids = data[0].split()
+            if not uids:
+                return []
+
+            # Newest emails first
+            recent_uids = uids[-limit:]
+            recent_uids.reverse()
+
+            uid_batch = b",".join(recent_uids)
+            fetch_status, fetch_data = mail.uid(
+                "FETCH",
+                uid_batch,
+                "(X-GM-LABELS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM TO DATE)])",
             )
+
+            if fetch_status != "OK" or not fetch_data:
+                return []
+
+            results: List[TenderReceivedEmail] = []
+            for item in fetch_data:
+                if not isinstance(item, tuple) or len(item) < 2:
+                    continue
+
+                meta_str = (
+                    item[0].decode("utf-8", errors="ignore")
+                    if isinstance(item[0], bytes)
+                    else str(item[0])
+                )
+                uid_match = re.search(r"UID\s+(\d+)", meta_str)
+                uid_str = uid_match.group(1) if uid_match else "unknown"
+
+                labels = parse_gmail_labels(meta_str)
+                hdr_msg = message_from_bytes(item[1])
+
+                subject = decode_mime_words(hdr_msg.get("Subject", ""))
+                sender = decode_mime_words(hdr_msg.get("From", ""))
+                date_str = decode_mime_words(hdr_msg.get("Date", ""))
+
+                tender_no = extract_tender_no_from_text(subject, known_tenders=known_tenders)
+                tender_name = extract_tender_name_from_text(subject)
+
+                results.append(
+                    TenderReceivedEmail(
+                        msg_id=uid_str,
+                        uid=uid_str,
+                        subject=subject,
+                        sender=sender,
+                        date=date_str,
+                        body_snippet=subject,
+                        tender_no=tender_no,
+                        tender_name=tender_name,
+                        labels=labels,
+                    )
+                )
+
+            return results
 
     def fetch_hkust_tender_emails(
         self,
@@ -370,32 +406,34 @@ class GoogleAccountMailer:
         known_tenders: Optional[List[str]] = None,
     ) -> List[TenderReceivedEmail]:
         """Fetch emails related to HKUST or tenders."""
-        with self.imap_session() as mail:
-            target_folder = folder or self._find_tender_tag_folder(mail) or "INBOX"
-            self._select_folder(mail, target_folder, readonly=True)
+        target_folder = folder
+        if not target_folder:
+            tag_folder = self.find_tender_tag_folder()
+            target_folder = tag_folder if tag_folder else "INBOX"
 
-            if target_folder != "INBOX":
-                return self._fetch_emails(
-                    mail,
-                    self._search_uids(mail, "ALL"),
-                    limit=limit,
-                    known_tenders=known_tenders,
-                )
+        if target_folder != "INBOX":
+            return self.read_emails(
+                folder=target_folder,
+                search_criteria="ALL",
+                limit=limit,
+                known_tenders=known_tenders,
+            )
 
-            try:
-                emails = self._fetch_emails(
-                    mail,
-                    self._search_uids(mail, 'X-GM-RAW "from:ust.hk OR subject:tender OR tender"'),
-                    limit=limit,
-                    known_tenders=known_tenders,
-                )
-            except Exception:
-                emails = self._fetch_emails(
-                    mail,
-                    self._search_uids(mail, "ALL"),
-                    limit=limit,
-                    known_tenders=known_tenders,
-                )
+        emails: List[TenderReceivedEmail] = []
+        try:
+            emails = self.read_emails(
+                folder="INBOX",
+                search_criteria='X-GM-RAW "from:ust.hk OR subject:tender OR tender"',
+                limit=limit,
+                known_tenders=known_tenders,
+            )
+        except Exception:
+            emails = self.read_emails(
+                folder="INBOX",
+                search_criteria="ALL",
+                limit=limit,
+                known_tenders=known_tenders,
+            )
 
         filtered: List[TenderReceivedEmail] = []
         for e in emails:
@@ -405,61 +443,3 @@ class GoogleAccountMailer:
                 filtered.append(e)
 
         return filtered
-
-    def tag_hkust_tender_emails(
-        self,
-        emails: Optional[List[TenderReceivedEmail]] = None,
-        tag_prefix: Optional[str] = None,
-        folder: str = "INBOX",
-        known_tenders: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
-        """Tag HKUST tender emails in Gmail under the HKUST Tenders tag."""
-        prefix = tag_prefix or config.HKUST_MAIL_TAG
-
-        if emails is None:
-            emails = self.fetch_hkust_tender_emails(
-                folder=folder, known_tenders=known_tenders
-            )
-
-        if not emails:
-            return []
-
-        tagged_summary: List[Dict[str, Any]] = []
-
-        with self.imap_session(folder=folder) as mail:
-            created_labels = set()
-
-            for e in emails:
-                tags_to_apply = [prefix]
-                applied: List[str] = []
-                for tag in tags_to_apply:
-                    if tag in e.labels:
-                        applied.append(tag)
-                        continue
-
-                    if tag not in created_labels:
-                        try:
-                            mail.create(f'"{tag}"')
-                        except Exception:
-                            pass
-                        created_labels.add(tag)
-
-                    try:
-                        res, _ = mail.uid("STORE", e.uid, "+X-GM-LABELS", f'("{tag}")')
-                        if res == "OK":
-                            applied.append(tag)
-                            if tag not in e.labels:
-                                e.labels.append(tag)
-                    except Exception:
-                        pass
-
-                tagged_summary.append({
-                    "uid": e.uid,
-                    "subject": e.subject,
-                    "sender": e.sender,
-                    "tender_no": e.tender_no,
-                    "tender_name": e.tender_name,
-                    "applied_tags": applied,
-                })
-
-            return tagged_summary

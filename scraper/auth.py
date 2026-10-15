@@ -20,8 +20,14 @@ class HKUSTAuthManager:
         self.headless = headless
 
     def get_context(self, browser: Browser) -> BrowserContext:
-        """Create fresh browser context with bounded default timeouts."""
-        context = browser.new_context(viewport={"width": 1400, "height": 900})
+        """Create fresh browser context with bounded default timeouts.
+
+        ``accept_downloads`` is required for the tender document downloads: without it
+        Chromium cancels the response and ``page.expect_download`` never fires.
+        """
+        context = browser.new_context(
+            viewport={"width": 1400, "height": 900}, accept_downloads=True
+        )
         context.set_default_navigation_timeout(config.HKUST_NAV_TIMEOUT_MS)
         context.set_default_timeout(config.HKUST_READY_TIMEOUT_MS)
         return context
