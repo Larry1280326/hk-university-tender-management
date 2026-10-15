@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass, field, asdict
 from email.header import decode_header
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set
 
 TEMPLATE_PATTERN = re.compile(
     r"Request for Tender Documents\s*[–\-]\s*([A-Za-z0-9/_\-\s]+?)\s*[–\-]",
@@ -113,6 +113,33 @@ def extract_tender_no_from_text(
             return found_kw
 
     return None
+
+
+def extract_all_tender_refs(subject: str) -> Set[str]:
+    """Collect every tender reference a subject mentions, not just the first one.
+
+    A single subject can legitimately quote more than one reference, so the
+    mailbox pre-check uses this instead of extract_tender_no_from_text() to
+    avoid missing a tender that a reply happens to mention second.
+    """
+    if not subject:
+        return set()
+
+    refs: Set[str] = set()
+
+    first_match = extract_tender_no_from_text(subject)
+    if first_match:
+        refs.add(first_match)
+
+    for tn in HKUST_TN_PATTERN.findall(subject):
+        if tn:
+            refs.add(tn.strip())
+
+    for code in HKUST_CODE_PATTERN.findall(subject):
+        if code:
+            refs.add(code.strip())
+
+    return refs
 
 
 def normalize_tender_ref(ref: Optional[str]) -> str:

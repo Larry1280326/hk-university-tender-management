@@ -9,6 +9,7 @@ from mailer.email_parser import (
     TenderReceivedEmail,
     extract_tender_no_from_text,
     extract_tender_name_from_text,
+    extract_all_tender_refs,
     normalize_tender_ref,
     decode_mime_words,
     parse_gmail_labels,
@@ -101,6 +102,26 @@ class TestMailReader(unittest.TestCase):
         raw3 = "12 (UID 34 X-GM-LABELS ())"
         self.assertEqual(parse_gmail_labels(raw3), [])
 
+    def test_extract_all_tender_refs(self):
+        # One subject quoting two references: both are collected, where
+        # extract_tender_no_from_text would only ever return the first.
+        subject = (
+            "Re: Request for Tender Documents – TNL2600072 - Supply of Chairs, "
+            "also see TNA2600095 PQ"
+        )
+        refs = extract_all_tender_refs(subject)
+        self.assertEqual(refs, {"TNL2600072", "TNA2600095 PQ"})
+        # The first match is always part of the set
+        self.assertIn(extract_tender_no_from_text(subject), refs)
+
+        # Slashed HKUST format alongside a TN code
+        mixed = "Tender No.: EO/2026/012 and Request for Tender Documents – TNL2600072 - Works"
+        self.assertEqual(extract_all_tender_refs(mixed), {"TNL2600072", "EO/2026/012"})
+
+        # Nothing to find
+        self.assertEqual(extract_all_tender_refs("Lunch meeting tomorrow"), set())
+        self.assertEqual(extract_all_tender_refs(""), set())
+
     @patch("imaplib.IMAP4_SSL")
     def test_list_mailboxes(self, mock_imap_cls):
         mock_imap = MagicMock()
@@ -190,6 +211,126 @@ class TestMailReader(unittest.TestCase):
 
         self.assertIn("TNP2600099", existing)
         self.assertIn("PU/2026/001", existing)
+
+    @patch("imaplib.IMAP4_SSL")
+    def test_get_existing_tender_numbers_uses_single_session(self, mock_imap_cls):
+        """Folder lookup (LIST) and the header fetch must share one login."""
+        mock_imap = MagicMock()
+        mock_imap_cls.return_value = mock_imap
+        mock_imap.select.return_value = ("OK", [b"1"])
+        mock_imap.list.return_value = ("OK", [b'(\\HasNoChildren) "/" "HKUST Tenders"'])
+
+        msg = EmailMessage()
+        msg["Subject"] = "Request for Tender Documents – TNP2600099 - Office Renovation"
+
+        def mock_uid(cmd, *args):
+            if cmd == "SEARCH":
+                return ("OK", [b"101"])
+            elif cmd == "FETCH":
+                return ("OK", [
+                    (b"101 (UID 101 BODY[HEADER.FIELDS (SUBJECT FROM DATE)] {60}", msg.as_bytes()),
+                ])
+            return ("OK", [])
+
+        mock_imap.uid.side_effect = mock_uid
+
+        mailer = GoogleAccountMailer(username="test@gmail.com", app_password="password123")
+        existing = mailer.get_existing_tender_numbers()
+
+        self.assertIn("TNP2600099", existing)
+        self.assertEqual(mock_imap_cls.call_count, 1)
+        self.assertEqual(mock_imap.login.call_count, 1)
+
+    @patch("imaplib.IMAP4_SSL")
+    def test_read_emails_batches_every_uid_newest_first(self, mock_imap_cls):
+        """limit=None covers every UID in one batch; limit=N takes the newest N."""
+        mock_imap = MagicMock()
+        mock_imap_cls.return_value = mock_imap
+        mock_imap.select.return_value = ("OK", [b"5"])
+
+        batches = []
+        msg = EmailMessage()
+        msg["Subject"] = "Request for Tender Documents – TNL2600072 - Supply of Chairs"
+
+        def mock_uid(cmd, *args):
+            if cmd == "SEARCH":
+                return ("OK", [b"1 2 3 4 5"])
+            elif cmd == "FETCH":
+                batches.append(args[0])
+                return ("OK", [
+                    (b"5 (UID 5 BODY[HEADER.FIELDS (SUBJECT FROM DATE)] {40}", msg.as_bytes()),
+                ])
+            return ("OK", [])
+
+        mock_imap.uid.side_effect = mock_uid
+
+        mailer = GoogleAccountMailer(username="test@gmail.com", app_password="password123")
+
+        mailer.read_emails(folder="INBOX", limit=None)
+        self.assertEqual(batches[0], b"5,4,3,2,1")
+
+        mailer.read_emails(folder="INBOX", limit=2)
+        self.assertEqual(batches[1], b"5,4")
+
+    @patch("imaplib.IMAP4_SSL")
+    def test_read_emails_skips_non_tuple_fetch_elements(self, mock_imap_cls):
+        """A real FETCH response ends with a bare b')' element, not a message tuple."""
+        mock_imap = MagicMock()
+        mock_imap_cls.return_value = mock_imap
+        mock_imap.select.return_value = ("OK", [b"1"])
+
+        msg = EmailMessage()
+        msg["Subject"] = "Request for Tender Documents – TNL2600072 - Supply of Chairs"
+
+        def mock_uid(cmd, *args):
+            if cmd == "SEARCH":
+                return ("OK", [b"7"])
+            elif cmd == "FETCH":
+                return ("OK", [
+                    (b"7 (UID 7 BODY[HEADER.FIELDS (SUBJECT FROM DATE)] {40}", msg.as_bytes()),
+                    b")",
+                ])
+            return ("OK", [])
+
+        mock_imap.uid.side_effect = mock_uid
+
+        mailer = GoogleAccountMailer(username="test@gmail.com", app_password="password123")
+        emails = mailer.read_emails(folder="INBOX", limit=None)
+
+        self.assertEqual(len(emails), 1)
+        self.assertEqual(emails[0].uid, "7")
+        self.assertEqual(emails[0].tender_no, "TNL2600072")
+
+    @patch("imaplib.IMAP4_SSL")
+    def test_fetch_hkust_tender_emails_uses_single_session(self, mock_imap_cls):
+        """Folder lookup and the fetch share one login; the INBOX filter still applies."""
+        mock_imap = MagicMock()
+        mock_imap_cls.return_value = mock_imap
+        mock_imap.select.return_value = ("OK", [b"1"])
+        mock_imap.list.return_value = ("OK", [b'(\\HasNoChildren) "/" "HKUST Tenders"'])
+
+        msg = EmailMessage()
+        msg["Subject"] = "Request for Tender Documents – TNL2600072 - Supply of Chairs"
+        msg["From"] = "HKUST Purchasing <pur@ust.hk>"
+
+        def mock_uid(cmd, *args):
+            if cmd == "SEARCH":
+                return ("OK", [b"101"])
+            elif cmd == "FETCH":
+                return ("OK", [
+                    (b"101 (UID 101 BODY[HEADER.FIELDS (SUBJECT FROM DATE)] {40}", msg.as_bytes()),
+                ])
+            return ("OK", [])
+
+        mock_imap.uid.side_effect = mock_uid
+
+        mailer = GoogleAccountMailer(username="test@gmail.com", app_password="password123")
+        emails = mailer.fetch_hkust_tender_emails(limit=10)
+
+        self.assertEqual(len(emails), 1)
+        self.assertEqual(emails[0].tender_no, "TNL2600072")
+        self.assertEqual(mock_imap_cls.call_count, 1)
+        self.assertEqual(mock_imap.login.call_count, 1)
 
     def _mock_imap_uid(self, cmd, *args):
         if cmd == "SEARCH":
