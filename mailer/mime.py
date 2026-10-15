@@ -37,18 +37,23 @@ def build_mime_message(
     # Attach file if specified
     if draft_info.attachment_path:
         attach_path = Path(draft_info.attachment_path)
-        if attach_path.is_file():
-            ctype, encoding = mimetypes.guess_type(str(attach_path))
-            if ctype is None or encoding is not None:
-                ctype = "application/octet-stream"
-            maintype, subtype = ctype.split("/", 1)
+        if not attach_path.is_file():
+            raise FileNotFoundError(
+                f"Attachment not found: {attach_path}. The body refers to it, so building "
+                "the message without it would send a promise it cannot keep."
+            )
 
-            with open(attach_path, "rb") as fp:
-                msg.add_attachment(
-                    fp.read(),
-                    maintype=maintype,
-                    subtype=subtype,
-                    filename=attach_path.name,
-                )
+        ctype, encoding = mimetypes.guess_type(str(attach_path))
+        if ctype is None or encoding is not None:
+            ctype = "application/octet-stream"
+        maintype, subtype = ctype.split("/", 1)
+
+        with open(attach_path, "rb") as fp:
+            msg.add_attachment(
+                fp.read(),
+                maintype=maintype,
+                subtype=subtype,
+                filename=attach_path.name,
+            )
 
     return msg

@@ -9,8 +9,22 @@ BASE_DIR = Path(__file__).resolve().parent
 ASSETS_DIR = BASE_DIR / "assets"
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def _project_path(raw: str) -> Path:
+    """Resolve a configured path against the project root when it is relative.
+
+    ``Path("assets/br.pdf")`` is read against the *current* directory, so the same .env
+    would point at the certificate when launched from the project root and at nothing
+    at all when launched from anywhere else.
+    """
+    path = Path(raw).expanduser()
+    return path if path.is_absolute() else BASE_DIR / path
+
+
 # Downloaded tender documents, one subfolder per tender number.
-DOCUMENTS_DIR = Path(os.getenv("HKUST_DOCUMENTS_DIR", str(BASE_DIR / "output_documents")))
+DOCUMENTS_DIR = _project_path(
+    os.getenv("HKUST_DOCUMENTS_DIR", str(BASE_DIR / "output_documents"))
+)
 
 # Load environment variables from .env
 load_dotenv(BASE_DIR / ".env")
@@ -104,7 +118,7 @@ def _build_default_sign_off() -> str:
 SIGN_OFF = os.getenv("SIGN_OFF", "") or _build_default_sign_off()
 
 # Business Registration (BR) Certificate Path
-BR_CERTIFICATE_PATH = Path(
+BR_CERTIFICATE_PATH = _project_path(
     os.getenv("BR_CERTIFICATE_PATH", str(ASSETS_DIR / "br_certificate.pdf"))
 )
 

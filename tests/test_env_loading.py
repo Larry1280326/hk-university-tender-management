@@ -91,5 +91,37 @@ class TestEnvLoading(unittest.TestCase):
             importlib.reload(config)
 
 
+class TestConfiguredPaths(unittest.TestCase):
+    """A relative path in .env must mean "under the project root", not "under $PWD".
+
+    Regression: BR_CERTIFICATE_PATH=assets/br.pdf was read against the current
+    directory, so the certificate attached when the tool was launched from the project
+    root and was silently dropped when it was launched from anywhere else.
+    """
+
+    def test_relative_path_resolves_under_the_project_root(self):
+        import config
+
+        self.assertEqual(
+            config._project_path("assets/br.pdf"), config.BASE_DIR / "assets" / "br.pdf"
+        )
+
+    def test_absolute_path_is_left_alone(self):
+        import config
+
+        self.assertEqual(config._project_path("/tmp/br.pdf"), Path("/tmp/br.pdf"))
+
+    def test_the_home_shortcut_is_expanded(self):
+        import config
+
+        self.assertEqual(config._project_path("~/br.pdf"), Path.home() / "br.pdf")
+
+    def test_the_br_certificate_path_is_always_absolute(self):
+        """Absolute means a launch directory can no longer change what gets attached."""
+        import config
+
+        self.assertTrue(config.BR_CERTIFICATE_PATH.is_absolute())
+
+
 if __name__ == "__main__":
     unittest.main()

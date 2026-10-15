@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import app
+import config
 from scraper.tender_parser import TenderDocument, TenderNotice
 
 
@@ -220,6 +221,21 @@ class TestSelectionFlow(unittest.TestCase):
         output = buffer.getvalue().lower()
         self.assertIn("no tenders selected", output)
         self.assertIn("returning to the main menu", output)
+
+    def test_a_missing_br_certificate_stops_before_anything_is_drafted(self):
+        """Creating nothing beats creating drafts that promise a missing attachment."""
+        with patch.object(app, "select_suitable_tenders", return_value=[open_tender()]), patch.object(
+            app, "questionary"
+        ) as q, patch.object(app, "display_draft_preview") as preview, patch.object(
+            config, "BR_CERTIFICATE_PATH", Path("/nonexistent/br.pdf")
+        ):
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                app.handle_tender_selection_and_drafting([open_tender()])
+
+        self.assertIn("BR certificate not found", buffer.getvalue())
+        preview.assert_not_called()
+        q.select.assert_not_called()
 
     def test_going_back_from_the_draft_menu_names_the_destination(self):
         with patch.object(app, "select_suitable_tenders", return_value=[open_tender()]), patch.object(

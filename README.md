@@ -60,7 +60,10 @@ COMPANY_ADDRESS=Your Company Address
 # SIGN_OFF="Best regards,\nYour Name\nYour Company Name"
 ```
 
-Place your official Business Registration certificate in `assets/br_certificate.pdf` (or customize `BR_CERTIFICATE_PATH`).
+Place your official Business Registration certificate in `assets/br_certificate.pdf` (or customize
+`BR_CERTIFICATE_PATH`). A relative path there is resolved against the project root, so the file is
+found however you launch the tool. If the configured file is missing, drafting stops with an error
+instead of creating drafts whose body promises a certificate they do not enclose.
 
 ---
 
@@ -166,4 +169,4 @@ To run the automated verification suite:
 uv run python -m unittest discover -s tests -v
 ```
 
-All 96 tests verify mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, the interactive menu loop, tender selection, regex extraction, and `.env` dynamic loading without requiring network access.
+All 102 tests verify mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, the interactive menu loop, tender selection, attachment handling, regex extraction, and `.env` dynamic loading without requiring network access.

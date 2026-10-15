@@ -56,7 +56,12 @@ class TestMimeBuilderAndSession(unittest.TestCase):
             self.assertEqual(att.get_content_type(), "application/pdf")
             self.assertEqual(att.get_content(), b"%PDF-1.4 test attachment content")
 
-    def test_build_mime_message_missing_attachment_graceful(self):
+    def test_a_promised_attachment_that_is_missing_is_refused(self):
+        """The body says the file is enclosed, so a silent drop sends a false promise.
+
+        Regression: this used to build the message with no attachment and no warning,
+        which is how a wrong BR_CERTIFICATE_PATH reached a real Gmail draft unnoticed.
+        """
         draft = TenderEmailDraft(
             tender_no="TEST-MIME-03",
             description="Testing missing attachment",
@@ -66,9 +71,24 @@ class TestMimeBuilderAndSession(unittest.TestCase):
             body="Body",
             attachment_path="non_existent_file.pdf",
         )
-        msg = build_mime_message(draft)
-        attachments = list(msg.iter_attachments())
-        self.assertEqual(len(attachments), 0)
+
+        with self.assertRaises(FileNotFoundError) as caught:
+            build_mime_message(draft)
+
+        self.assertIn("non_existent_file.pdf", str(caught.exception))
+
+    def test_a_draft_that_asks_for_no_attachment_still_builds(self):
+        """Opting out stays possible; only a promised-but-missing file is an error."""
+        draft = TenderEmailDraft(
+            tender_no="TEST-MIME-04",
+            description="No attachment asked for",
+            recipient_name="Ms. Wong",
+            recipient_email="wong@ust.hk",
+            subject="Subject",
+            body="Body",
+        )
+
+        self.assertEqual(list(build_mime_message(draft).iter_attachments()), [])
 
     @patch("imaplib.IMAP4_SSL")
     def test_imap_session_context_manager(self, mock_imap_cls):

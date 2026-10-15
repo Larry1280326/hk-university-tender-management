@@ -279,6 +279,17 @@ def handle_tender_selection_and_drafting(
             )
             return
 
+        # The body promises the BR certificate, so a missing one stops the flow here
+        # rather than producing drafts that reference an attachment they do not carry.
+        if not config.BR_CERTIFICATE_PATH.is_file():
+            console.print(
+                f"[bold red][!] BR certificate not found:[/bold red] "
+                f"{config.BR_CERTIFICATE_PATH}\n"
+                "[red]Point BR_CERTIFICATE_PATH in .env at the file - a draft must not "
+                "promise an attachment it does not carry.[/red]"
+            )
+            return
+
         drafts: List[TenderEmailDraft] = [
             generate_tender_email(
                 tender_no=t.tender_no,
