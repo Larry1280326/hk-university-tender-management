@@ -25,8 +25,6 @@ from mailer.webmail_helper import generate_gmail_compose_url, export_eml_file
 from cli_views import (
     console,
     display_welcome_banner,
-    display_tender_table,
-    display_invited_tenders,
     display_draft_preview,
 )
 
@@ -112,15 +110,6 @@ def run_tender_workflow(headless: bool = True) -> None:
             console.print("[yellow]No active tenders found or failed to fetch.[/yellow]")
         return
 
-    invited = [t for t in tenders if t.invited]
-    open_tenders = [t for t in tenders if not t.invited]
-
-    # Shown as two groups: invitations carry documents, open tenders carry contacts.
-    if invited:
-        display_invited_tenders(invited)
-    if open_tenders:
-        display_tender_table(open_tenders)
-
     handle_tender_selection_and_drafting(tenders, headless=headless)
 
 
@@ -144,59 +133,40 @@ def select_suitable_tenders(
     tenders: List[TenderNotice],
     preselected_refs: Optional[set] = None,
 ) -> Optional[List[TenderNotice]]:
-    """Interactive checklist or select all for tender selection.
+    """Interactive checklist for tender selection.
 
     Returns the chosen tenders, an empty list when the checklist was confirmed with
-    nothing ticked, and None when the user went back without choosing. The caller
+    nothing ticked, and None when the prompt was cancelled/interrupted. The caller
     reports the last two differently, so they must not collapse into one value.
     """
     if not tenders:
         return None
 
-    mode = questionary.select(
-        "How would you like to select suitable tenders?",
-        choices=[
-            "1. Interactive Checklist (pick individual tenders)",
-            "2. Select All tenders",
-            "3. Back",
-        ],
-    ).ask()
+    invited = [t for t in tenders if t.invited]
+    open_tenders = [t for t in tenders if not t.invited]
 
-    if not mode or mode.startswith("3"):
-        return None
-
-    if mode.startswith("1"):
-        invited = [t for t in tenders if t.invited]
-        open_tenders = [t for t in tenders if not t.invited]
-
-        choices = []
-        for label, group in (
-            ("My Tender Invitation / Interested Tender(s)", invited),
-            ("Tender Notice", open_tenders),
-        ):
-            if not group:
-                continue
-            # Only separating when both groups exist; a lone group needs no heading.
-            if invited and open_tenders:
-                choices.append(questionary.Separator(f"── {label} ──"))
-            for t in group:
-                is_checked = bool(preselected_refs and t.tender_no in preselected_refs)
-                choices.append(
-                    questionary.Choice(
-                        title=_tender_choice_title(t),
-                        value=t,
-                        checked=is_checked,
-                    )
+    choices = []
+    for label, group in (
+        ("My Tender Invitation / Interested Tender(s)", invited),
+        ("Tender Notice", open_tenders),
+    ):
+        if not group:
+            continue
+        # Only separating when both groups exist; a lone group needs no heading.
+        if invited and open_tenders:
+            choices.append(questionary.Separator(f"── {label} ──"))
+        for t in group:
+            is_checked = bool(preselected_refs and t.tender_no in preselected_refs)
+            choices.append(
+                questionary.Choice(
+                    title=_tender_choice_title(t),
+                    value=t,
+                    checked=is_checked,
                 )
+            )
 
-        console.print("[dim]Tip: Space to toggle, 'a' to select all, Enter to confirm.[/dim]")
-        selected = questionary.checkbox("Select tenders:", choices=choices).ask()
-        return selected or []
-
-    if mode.startswith("2"):
-        return tenders
-
-    return None
+    console.print("[dim]Tip: Space to toggle, 'a' to select all, Enter to confirm.[/dim]")
+    return questionary.checkbox("Select tenders:", choices=choices).ask()
 
 
 def _offer_document_download(
@@ -377,10 +347,9 @@ def draft_emails_for_tenders(drafts: List[TenderEmailDraft]) -> None:
 
 
 def get_processed_tender_numbers() -> Set[str]:
-    """Scan Inbox, Drafts and Sent for tenders already dealt with, and report where each was found.
+    """Scan Inbox, Drafts and Sent for tenders already dealt with.
 
-    Returns just the tender references, which the scraper uses to hide those rows; the
-    per-tender mailbox name is printed so a wrong match is visible rather than silent.
+    Returns the tender references, which the scraper uses to hide those rows.
     """
     mailer = GoogleAccountMailer()
     if not mailer.is_configured():
@@ -398,14 +367,12 @@ def get_processed_tender_numbers() -> Set[str]:
         )
         return set()
 
-    # Most refs here are old tenders no longer on the portal, so this lists what the mail
-    # says rather than claiming each one was hidden; only the still-listed ones are.
+    # Most refs here are old tenders no longer on the portal, so this reports the count
+    # found in mail rather than claiming each one was hidden; only the still-listed ones are.
     console.print(
         f"[+] [bold green]{len(handled)}[/bold green] tender reference(s) found in your mailboxes"
-        f" - any still on the portal are hidden from the list:"
+        f" - any still on the portal are hidden from the list."
     )
-    for ref, sources in sorted(handled.items()):
-        console.print(f"      {ref:<16} [yellow]found in: {', '.join(sources)}[/yellow]")
 
     return set(handled)
 
@@ -419,7 +386,7 @@ def interactive_menu() -> bool:
     choice = questionary.select(
         "Select an option:",
         choices=[
-            "1. HKUST — Scrape Tenders & Draft Emails",
+            "1. HKUST",
             "2. Test Google Account Connection",
             "3. Exit",
         ],

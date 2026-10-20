@@ -93,8 +93,7 @@ class TestProcessedTenderNumbers(unittest.TestCase):
 
         self.assertEqual(result, set())
 
-    def test_each_reference_is_reported_with_the_mailbox_it_was_found_in(self):
-        """A wrong match has to be visible in the output, not silently hidden."""
+    def test_summary_reports_the_count_without_listing_individual_references(self):
         with patch.object(app, "GoogleAccountMailer") as mailer_cls:
             mailer_cls.return_value.is_configured.return_value = True
             mailer_cls.return_value.get_handled_tenders.return_value = {
@@ -106,8 +105,9 @@ class TestProcessedTenderNumbers(unittest.TestCase):
                 app.get_processed_tender_numbers()
 
         output = buffer.getvalue()
-        self.assertIn("TNH2600105", output)
-        self.assertIn("Inbox, Sent", output)
+        self.assertIn("1 tender reference(s) found in your mailboxes", output)
+        self.assertNotIn("TNH2600105", output)
+        self.assertNotIn("found in:", output)
 
 
 class TestOfferDocumentDownload(unittest.TestCase):
@@ -160,41 +160,35 @@ class TestOfferDocumentDownload(unittest.TestCase):
 
 
 class TestSelectSuitableTenders(unittest.TestCase):
-    """Going back and picking nothing must stay distinguishable.
+    """Interrupting the checklist and confirming nothing must stay distinguishable.
 
     The caller says "Returning to the main menu" for one and "No tenders selected" for
     the other, so collapsing both into an empty list would lose the difference.
     """
 
-    def test_back_returns_none(self):
-        with patch.object(app, "questionary") as q:
-            q.select.return_value.ask.return_value = "3. Back"
-
-            self.assertIsNone(app.select_suitable_tenders([open_tender()]))
-
     def test_an_interrupted_prompt_returns_none(self):
         with patch.object(app, "questionary") as q:
-            q.select.return_value.ask.return_value = None
+            q.checkbox.return_value.ask.return_value = None
 
             self.assertIsNone(app.select_suitable_tenders([open_tender()]))
+            q.select.assert_not_called()
 
     def test_confirming_an_empty_checklist_returns_an_empty_list(self):
         with patch.object(app, "questionary") as q:
-            q.select.return_value.ask.return_value = (
-                "1. Interactive Checklist (pick individual tenders)"
-            )
             q.checkbox.return_value.ask.return_value = []
 
             self.assertEqual(app.select_suitable_tenders([open_tender()]), [])
+            q.select.assert_not_called()
 
-    def test_select_all_returns_every_tender(self):
+    def test_returns_checked_tenders_directly_from_checklist(self):
         tender = open_tender()
         with patch.object(app, "questionary") as q:
-            q.select.return_value.ask.return_value = "2. Select All tenders"
+            q.checkbox.return_value.ask.return_value = [tender]
 
             selected = app.select_suitable_tenders([tender])
 
         self.assertEqual([t.tender_no for t in selected], [tender.tender_no])
+        q.select.assert_not_called()
 
     def test_nothing_to_choose_from_returns_none(self):
         with patch.object(app, "questionary"):
@@ -307,7 +301,7 @@ class TestMainMenuLoop(unittest.TestCase):
         with patch.object(app, "questionary") as q, patch.object(
             app, "run_tender_workflow"
         ) as workflow:
-            q.select.return_value.ask.return_value = "1. HKUST — Scrape Tenders & Draft Emails"
+            q.select.return_value.ask.return_value = "1. HKUST"
 
             self.assertTrue(app.interactive_menu())
 
@@ -325,8 +319,8 @@ class TestMainMenuLoop(unittest.TestCase):
     def test_main_reshows_the_menu_until_exit(self):
         """Cancelling a scrape must land back on the menu, not drop the user to the shell."""
         answers = iter([
-            "1. HKUST — Scrape Tenders & Draft Emails",
-            "1. HKUST — Scrape Tenders & Draft Emails",
+            "1. HKUST",
+            "1. HKUST",
             "3. Exit",
         ])
         with patch("sys.argv", ["app.py"]), patch.object(
