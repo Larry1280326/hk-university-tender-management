@@ -1,13 +1,16 @@
-# HKUST e-Tendering Automation & Gmail Drafter
+# HKUST & CUHK e-Tendering Automation & Gmail Drafter
 
-Automated workflow to:
-1. Before scraping, scan Gmail (`Inbox`, `Drafts`, and `Sent`) for tenders you have already dealt with over the last `HKUST_MAIL_LOOKBACK_DAYS` days (default 60), so they are hidden from the scrape.
-2. Log in to the HKUST e-Tendering Portal (`https://w5.ab.ust.hk/jstd/td_login`), accepting Terms & Conditions if redirected to `td_welcome`, and wait for Google reCAPTCHA readiness.
-3. Scrape the offer selection page (`td_tender_offr_sel`), which renders **two separate tables**:
-   - **My Tender Invitation / Interested Tender(s)** (`#inviteTenderList`) — tenders you were invited to. The portal has already released these documents, so the tool can download them directly.
-   - **Tender Notice** (`#openTenderList`) — open tenders. No documents are released; the detail page carries the Purchasing Office contact to email instead.
-4. Open the interactive checklist directly for selection, grouped by invitation vs. open tender notice.
-5. Prompt to download tender documents (`PDF`s/files) for selected **invited tenders** into `output_documents/<tender_no>/` (configurable via `HKUST_DOCUMENTS_DIR`), and automatically draft personalized enquiry emails in **Gmail** (with company details and Business Registration certificate attached) for selected **open tenders**.
+Automated workflow supporting both **HKUST** (`w5.ab.ust.hk/jstd`) and **CUHK (CUPro)** (`cupro-cuhk.com`):
+1. **HKUST Workflow**:
+   - Before scraping, scan Gmail (`Inbox`, `Drafts`, and `Sent`) for tenders you have already dealt with over the last `MAIL_LOOKBACK_DAYS` days (default 60), so they are hidden from the scrape.
+   - Log in to the HKUST e-Tendering Portal (`https://w5.ab.ust.hk/jstd/td_login`), accepting Terms & Conditions if redirected to `td_welcome`, and wait for Google reCAPTCHA readiness.
+   - Scrape the offer selection page (`td_tender_offr_sel`), which renders **My Tender Invitation / Interested Tender(s)** (`#inviteTenderList`) and **Tender Notice** (`#openTenderList`).
+   - Open the interactive checklist directly for selection, download released documents for selected **invited tenders** into `<DOCUMENT_DIR>/HKUST/<project_name>/`, and automatically draft personalized enquiry emails in **Gmail** (with company details and Business Registration certificate attached) for selected **open tenders**.
+2. **CUHK (CUPro) Workflow**:
+   - Log in to the CUHK Procurement System (`https://cupro-cuhk.com/Supplier/en/Login/index.aspx`), automatically accepting the supplier declarations.
+   - Scrape active (`Status == "Issued"`) **Request for Quotation (RFQ)** (`Q-YYYYNNNN`) and **Tender Invitation** (`T-YYYYNNNN`) notices.
+   - Group active notices in the interactive checklist into **Expression of Interest Submitted / Invited** (documents already unlocked) and **Open Tender Notice (Submit EOI & Download)**.
+   - For selected open tenders, automatically submit **Expression of Interest (Yes)** on CUPro to unlock the tender documents, and download all released documents, addenda, registration forms, and query responses directly into `<DOCUMENT_DIR>/CUHK/<project_name>/`.
 
 ---
 
@@ -38,6 +41,10 @@ Copy `.env.example` to `.env` (or edit existing `.env`):
 HKUST_VENDOR_ID=your_vendor_id_here
 HKUST_PASSWORD=your_password_here
 
+# CUHK (CUPro) Supplier Portal Credentials
+CUHK_USER_ID=your_cuhk_user_id_here
+CUHK_PASSWORD=your_cuhk_password_here
+
 # Path to your Business Registration (BR) Certificate file (PDF or image)
 BR_CERTIFICATE_PATH=assets/br_certificate.pdf
 
@@ -46,9 +53,9 @@ BR_CERTIFICATE_PATH=assets/br_certificate.pdf
 GMAIL_USER=your_email@gmail.com
 GMAIL_APP_PASSWORD=your_16_char_app_password
 GMAIL_DRAFTS_URL=https://mail.google.com/mail/#drafts
-HKUST_MAIL_TAG=HKUST Tenders
+MAIL_TAG=HKUST Tenders
 # How far back Inbox/Drafts/Sent are scanned to decide a tender is already handled
-# HKUST_MAIL_LOOKBACK_DAYS=60
+# MAIL_LOOKBACK_DAYS=60
 
 # Company Information (Loaded dynamically into email drafts)
 COMPANY_NAME=Your Company Name
@@ -59,26 +66,30 @@ COMPANY_ADDRESS=Your Company Address
 # Optional custom sign-off override (defaults to Contact Person + Company Name)
 # SIGN_OFF="Best regards,\nYour Name\nYour Company Name"
 
-# Optional: Where invited-tender documents are saved (one subfolder per tender number)
-# HKUST_DOCUMENTS_DIR=output_documents
+# Where tender documents are saved (organized under <DOCUMENT_DIR>/<UNIVERSITY>/<tender_no>/)
+DOCUMENT_DIR=output_documents
 
 # Optional: Portal URL & Navigation Tuning Overrides (defaults shown)
 # HKUST_WELCOME_URL=https://w5.ab.ust.hk/jstd/td_welcome?page=td_login
 # HKUST_LOGIN_URL=https://w5.ab.ust.hk/jstd/td_login
 # HKUST_TENDER_OFFR_SEL_URL=https://w5.ab.ust.hk/jstd/td_tender_offr_sel
-# HKUST_NAV_TIMEOUT_MS=15000          # loading the page document itself
-# HKUST_READY_TIMEOUT_MS=15000        # waiting for a specific element to appear
-# HKUST_SCRIPT_TIMEOUT_MS=30000       # waiting for the reCAPTCHA library to load
-# HKUST_POST_LOGIN_TIMEOUT_MS=20000   # waiting for the login result (never retried)
-# HKUST_DETAIL_TIMEOUT_MS=20000       # per-tender detail page
-# HKUST_NAV_ATTEMPTS=3                # set to 1 to disable retries
-# HKUST_NAV_BACKOFF_SECONDS=2.0       # sleeps 2s, then 4s, between attempts
-# HKUST_RETRY_ON_NET_ERRORS=true      # also retry transient network resets
-# HKUST_DEBUG_ARTIFACTS=true          # save screenshot + HTML to assets/debug/ on failure
+# CUHK_LOGIN_URL=https://cupro-cuhk.com/Supplier/en/Login/index.aspx
+# CUHK_ACCEPT_TERMS_URL=https://cupro-cuhk.com/Supplier/en/Login/AcceptTerms.aspx
+# CUHK_TENDER_SEARCH_URL=https://cupro-cuhk.com/Supplier/en/Tender/Search.aspx
+# CUHK_RFQ_SEARCH_URL=https://cupro-cuhk.com/Supplier/en/RFQ/Search.aspx
+# NAV_TIMEOUT_MS=15000          # loading the page document itself
+# READY_TIMEOUT_MS=15000        # waiting for a specific element to appear
+# SCRIPT_TIMEOUT_MS=30000       # waiting for external scripts (e.g. reCAPTCHA) to load
+# POST_LOGIN_TIMEOUT_MS=20000   # waiting for the login result (never retried)
+# DETAIL_TIMEOUT_MS=20000       # per-tender detail page
+# NAV_ATTEMPTS=3                # set to 1 to disable retries
+# NAV_BACKOFF_SECONDS=2.0       # sleeps 2s, then 4s, between attempts
+# RETRY_ON_NET_ERRORS=true      # also retry transient network resets
+# DEBUG_ARTIFACTS=true          # save screenshot + HTML to assets/debug/ on failure
 ```
 
 Place your official Business Registration certificate in `assets/br_certificate.pdf` (or customize
-`BR_CERTIFICATE_PATH`). Both `BR_CERTIFICATE_PATH` and `HKUST_DOCUMENTS_DIR` accept relative paths
+`BR_CERTIFICATE_PATH`). Both `BR_CERTIFICATE_PATH` and `DOCUMENT_DIR` accept relative paths
 (resolved against the project root), absolute paths, or `~` home-relative paths. If the configured BR
 certificate file is missing, drafting stops with an error instead of creating drafts whose body promises
 a certificate they do not enclose.
@@ -117,12 +128,16 @@ uv run python app.py
   1. Scans `Inbox`, `Drafts`, and `Sent` via IMAP to skip already-handled tenders.
   2. Logs in and scrapes both tender tables (`#inviteTenderList` and `#openTenderList`).
   3. Opens the interactive tender checklist directly (`Space` to toggle, `a` to select all, `i` to invert, `Enter` to confirm).
-  4. If any **invited tenders** are selected, prompts to download their released documents into `output_documents/<safe_tender_no>/` (or `HKUST_DOCUMENTS_DIR`).
+  4. If any **invited tenders** are selected, prompts to download their released documents into `<DOCUMENT_DIR>/HKUST/<project_name>/`.
   5. If any **open tenders** are selected, verifies `BR_CERTIFICATE_PATH` exists, shows a sample email preview card, and lets you confirm draft creation (`1. Yes, Create Drafts in Gmail`), return to modify your selection (`2. Back to Selection`), or return to the main menu (`3. Back to Main Menu`).
-- **2. Test Google Account Connection**: Verifies Google App Password and IMAP connection (and reports the resolved localized Drafts folder).
-- **3. Exit**
+- **2. CUHK**:
+  1. Logs into CUHK CUPro (`cupro-cuhk.com`) and scrapes active (`Issued`) RFQs and Tender Invitations.
+  2. Opens the interactive checklist grouped by **Expression of Interest Submitted / Invited** vs. **Open Tender Notice (Submit EOI & Download)**.
+  3. Submits **Expression of Interest (Yes)** on CUPro for any selected open tenders (unlocking their files) and downloads all documents into `<DOCUMENT_DIR>/CUHK/<project_name>/`.
+- **3. Test Google Account Connection**: Verifies Google App Password and IMAP connection (and reports the resolved localized Drafts folder).
+- **4. Exit**
 
-The menu stays up until you choose **3. Exit**, so cancelling a scrape — or finishing one —
+The menu stays up until you choose **4. Exit**, so cancelling a scrape — or finishing one —
 returns you here rather than closing the program. Ctrl-C at the prompt also exits.
 
 #### Direct Command Line Flags:
