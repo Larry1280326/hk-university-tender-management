@@ -280,13 +280,24 @@ class TestChoiceLabels(unittest.TestCase):
 
         self.assertNotIn("Sir/Madam", app._tender_choice_title(tender))
 
+    def test_cuhk_open_label_indicates_eoi_submission_and_download(self):
+        tender = open_tender()
+        tender.tender_no = "T-20260422"
+        tender.needs_eoi = True
+        tender.contact_person = "Phyllis HM Leung"
+        tender.contact_email = "pyhllis@cuhk.edu.hk"
+
+        title = app._tender_choice_title(tender)
+        self.assertIn("Submit EOI & download", title)
+        self.assertIn("Phyllis HM Leung <pyhllis@cuhk.edu.hk>", title)
+
 
 class TestMainMenuLoop(unittest.TestCase):
     """The menu holds the session open, so a cancelled run must not close the program."""
 
     def test_exit_closes_the_menu(self):
         with patch.object(app, "questionary") as q:
-            q.select.return_value.ask.return_value = "3. Exit"
+            q.select.return_value.ask.return_value = "4. Exit"
 
             self.assertFalse(app.interactive_menu())
 
@@ -307,9 +318,19 @@ class TestMainMenuLoop(unittest.TestCase):
 
         workflow.assert_called_once()
 
+    def test_running_cuhk_workflow_leaves_the_menu_open(self):
+        with patch.object(app, "questionary") as q, patch.object(
+            app, "run_cuhk_workflow"
+        ) as workflow:
+            q.select.return_value.ask.return_value = "2. CUHK"
+
+            self.assertTrue(app.interactive_menu())
+
+        workflow.assert_called_once()
+
     def test_testing_the_connection_leaves_the_menu_open(self):
         with patch.object(app, "questionary") as q, patch.object(app, "GoogleAccountMailer") as mailer:
-            q.select.return_value.ask.return_value = "2. Test Google Account Connection"
+            q.select.return_value.ask.return_value = "3. Test Google Account Connection"
             mailer.return_value.test_connection.return_value = (True, "ok")
 
             self.assertTrue(app.interactive_menu())
@@ -320,19 +341,22 @@ class TestMainMenuLoop(unittest.TestCase):
         """Cancelling a scrape must land back on the menu, not drop the user to the shell."""
         answers = iter([
             "1. HKUST",
-            "1. HKUST",
-            "3. Exit",
+            "2. CUHK",
+            "4. Exit",
         ])
         with patch("sys.argv", ["app.py"]), patch.object(
             app, "display_welcome_banner"
         ), patch.object(app, "questionary") as q, patch.object(
             app, "run_tender_workflow"
-        ) as workflow:
+        ) as hkust_workflow, patch.object(
+            app, "run_cuhk_workflow"
+        ) as cuhk_workflow:
             q.select.return_value.ask.side_effect = lambda: next(answers)
 
             app.main()
 
-        self.assertEqual(workflow.call_count, 2)
+        self.assertEqual(hkust_workflow.call_count, 1)
+        self.assertEqual(cuhk_workflow.call_count, 1)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,9 @@ import questionary
 
 import config
 from scraper.auth import HKUSTAuthManager
+from scraper.cuhk_auth import CUHKAuthManager
+from scraper.cuhk_documents import process_cuhk_tenders
+from scraper.cuhk_parser import CUHKTenderParser
 from scraper.documents import download_tender_documents
 from scraper.tender_parser import TenderParser, TenderNotice
 from mailer.template import generate_tender_email, TenderEmailDraft
@@ -60,6 +63,29 @@ def portal_session(headless: bool = True):
             browser.close()
 
 
+@contextmanager
+def cuhk_portal_session(headless: bool = True):
+    """Yield a logged-in CUHK ``(page, parser)`` and close the browser on exit."""
+    auth_mgr = CUHKAuthManager(headless=headless)
+
+    with sync_playwright() as p:
+        console.print("[*] Launching Chromium browser...", style="cyan")
+        browser = p.chromium.launch(headless=headless)
+        context = auth_mgr.get_context(browser)
+        page = context.new_page()
+
+        try:
+            console.print(
+                f"[*] Logging into CUHK CUPro as User ID: {config.CUHK_USER_ID}...",
+                style="cyan",
+            )
+            auth_mgr.perform_login(page)
+            yield page, CUHKTenderParser(page)
+        finally:
+            context.close()
+            browser.close()
+
+
 def scrape_tenders(
     parser: TenderParser,
     existing_tenders: Optional[Set[str]] = None,
@@ -97,7 +123,7 @@ def run_tender_workflow(headless: bool = True) -> None:
             tenders = scrape_tenders(parser, existing_tenders)
     except Exception as e:
         console.print(f"[bold red]Scraper Error:[/bold red] {type(e).__name__}: {e}")
-        if config.HKUST_DEBUG_ARTIFACTS:
+        if config.DEBUG_ARTIFACTS:
             console.print_exception(show_locals=False)
         return
 
@@ -118,13 +144,27 @@ def _tender_choice_title(t: TenderNotice) -> str:
     if t.invited:
         count = len(t.documents)
         detail = f"{count} document{'s' if count != 1 else ''} to download"
-    elif t.contact_email:
-        named = t.contact_person and t.contact_person != "Sir/Madam"
-        detail = f"{t.contact_person} <{t.contact_email}>" if named else f"<{t.contact_email}>"
-    elif t.contact_person and t.contact_person != "Sir/Madam":
-        detail = t.contact_person
     else:
-        detail = ""
+        if t.contact_email:
+            named = t.contact_person and t.contact_person != "Sir/Madam"
+            contact_str = (
+                f"{t.contact_person} <{t.contact_email}>"
+                if named
+                else f"<{t.contact_email}>"
+            )
+        elif t.contact_person and t.contact_person != "Sir/Madam":
+            contact_str = t.contact_person
+        else:
+            contact_str = ""
+
+        if t.needs_eoi:
+            detail = (
+                f"Submit EOI & download — {contact_str}"
+                if contact_str
+                else "Submit EOI & download"
+            )
+        else:
+            detail = contact_str
 
     return f"{t.tender_no} — {t.description}" + (f" ({detail})" if detail else "")
 
@@ -132,6 +172,8 @@ def _tender_choice_title(t: TenderNotice) -> str:
 def select_suitable_tenders(
     tenders: List[TenderNotice],
     preselected_refs: Optional[set] = None,
+    invited_heading: str = "My Tender Invitation / Interested Tender(s)",
+    open_heading: str = "Tender Notice",
 ) -> Optional[List[TenderNotice]]:
     """Interactive checklist for tender selection.
 
@@ -147,8 +189,8 @@ def select_suitable_tenders(
 
     choices = []
     for label, group in (
-        ("My Tender Invitation / Interested Tender(s)", invited),
-        ("Tender Notice", open_tenders),
+        (invited_heading, invited),
+        (open_heading, open_tenders),
     ):
         if not group:
             continue
@@ -195,7 +237,10 @@ def _offer_document_download(
         console.print("[yellow]Skipped document download.[/yellow]")
         return
 
-    console.print(f"[*] Downloading documents to [bold]{config.DOCUMENTS_DIR}[/bold]...", style="cyan")
+    hkust_docs_dir = config.DOCUMENT_DIR / "HKUST"
+    console.print(
+        f"[*] Downloading documents to [bold]{hkust_docs_dir}[/bold]...", style="cyan"
+    )
     try:
         with portal_session(headless=headless) as (page, _parser):
             saved = download_tender_documents(page, pending)
@@ -210,7 +255,7 @@ def _offer_document_download(
 
     console.print(f"[bold green][OK] Downloaded {len(saved)} document(s):[/bold green]")
     for path in saved:
-        console.print(f"  * {path.name} [dim]({path.parent.name})[/dim]")
+        console.print(f"  * {path.name} [dim](HKUST/{path.parent.name})[/dim]")
     downloaded_refs.update(t.tender_no for t in pending)
 
 
@@ -355,7 +400,7 @@ def get_processed_tender_numbers() -> Set[str]:
     if not mailer.is_configured():
         return set()
 
-    days = config.HKUST_MAIL_LOOKBACK_DAYS
+    days = config.MAIL_LOOKBACK_DAYS
     console.print(f"[*] Checking Inbox, Drafts and Sent (last {days} days)...", style="cyan")
     with console.status("[cyan]Scanning mailboxes for already-handled tenders...", spinner="dots"):
         handled = mailer.get_handled_tenders()
@@ -377,6 +422,92 @@ def get_processed_tender_numbers() -> Set[str]:
     return set(handled)
 
 
+def handle_cuhk_selection_and_download(
+    tenders: List[TenderNotice],
+    headless: bool = True,
+) -> None:
+    """Interactive selection, EOI submission, and document download for CUHK tenders."""
+    if not tenders:
+        return
+
+    selected = select_suitable_tenders(
+        tenders,
+        invited_heading="Expression of Interest Submitted / Invited",
+        open_heading="Open Tender Notice (Submit EOI & Download)",
+    )
+
+    if selected is None:
+        console.print("[cyan]Returning to the main menu...[/cyan]")
+        return
+
+    if not selected:
+        console.print("[yellow]No tenders selected - returning to the main menu.[/yellow]")
+        return
+
+    eoi_needed = [t for t in selected if t.needs_eoi]
+    total_count = len(selected)
+    if eoi_needed:
+        prompt_msg = (
+            f"Submit EOI for {len(eoi_needed)} open tender(s) and download documents "
+            f"for {total_count} selected tender(s)?"
+        )
+    else:
+        prompt_msg = f"Download tender documents for {total_count} selected tender(s)?"
+
+    if not questionary.confirm(prompt_msg, default=True).ask():
+        console.print("[yellow]Skipped CUHK tender processing.[/yellow]")
+        return
+
+    cuhk_docs_dir = config.DOCUMENT_DIR / "CUHK"
+    console.print(
+        f"[*] Processing CUHK tender(s) and downloading documents to "
+        f"[bold]{cuhk_docs_dir}[/bold]...",
+        style="cyan",
+    )
+    try:
+        with cuhk_portal_session(headless=headless) as (page, _parser):
+            saved = process_cuhk_tenders(page, selected)
+    except Exception as e:
+        console.print(f"[bold red]CUHK processing failed:[/bold red] {type(e).__name__}: {e}")
+        return
+
+    if not saved:
+        console.print("[yellow]No documents were downloaded.[/yellow]")
+        return
+
+    console.print(f"[bold green][OK] Downloaded {len(saved)} document(s):[/bold green]")
+    for path in saved:
+        console.print(f"  * {path.name} [dim](CUHK/{path.parent.name})[/dim]")
+
+
+def run_cuhk_workflow(headless: bool = True) -> None:
+    """Scrape active CUHK RFQs & Tenders, select, submit EOI if needed, and download."""
+    if not config.CUHK_USER_ID or not config.CUHK_PASSWORD:
+        console.print(
+            "[bold red][!] CUHK credentials missing![/bold red] "
+            "Please configure CUHK_USER_ID and CUHK_PASSWORD in your .env file."
+        )
+        return
+
+    mode = "headless" if headless else "visible"
+    console.print(f"[*] Fetching active CUHK RFQs and Tenders ({mode})...", style="cyan")
+
+    try:
+        with cuhk_portal_session(headless=headless) as (_page, parser):
+            tenders = scrape_tenders(parser)
+    except Exception as e:
+        console.print(f"[bold red]CUHK Scraper Error:[/bold red] {type(e).__name__}: {e}")
+        if config.DEBUG_ARTIFACTS:
+            console.print_exception(show_locals=False)
+        return
+
+    if not tenders:
+        console.print("[yellow]No active CUHK tenders or RFQs found.[/yellow]")
+        return
+
+    handle_cuhk_selection_and_download(tenders, headless=headless)
+
+
 def interactive_menu() -> bool:
     """Show the main menu once and route the choice.
 
@@ -387,14 +518,15 @@ def interactive_menu() -> bool:
         "Select an option:",
         choices=[
             "1. HKUST",
-            "2. Test Google Account Connection",
-            "3. Exit",
+            "2. CUHK",
+            "3. Test Google Account Connection",
+            "4. Exit",
         ],
     ).ask()
 
     # questionary answers None when the prompt itself is interrupted, which is also a
     # request to leave rather than to carry on.
-    if not choice or choice.startswith("3"):
+    if not choice or choice.startswith("4"):
         console.print("[yellow]Exiting.[/yellow]")
         return False
 
@@ -402,6 +534,9 @@ def interactive_menu() -> bool:
         run_tender_workflow(headless=True)
 
     elif choice.startswith("2"):
+        run_cuhk_workflow(headless=True)
+
+    elif choice.startswith("3"):
         console.print(f"[*] Testing Google App Password connection for {config.GMAIL_USER}...", style="cyan")
         mailer = GoogleAccountMailer()
         success, msg = mailer.test_connection()
