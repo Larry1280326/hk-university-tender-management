@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import app
 import config
-from scraper.tender_parser import TenderDocument, TenderNotice
+from scraper.models import TenderDocument, TenderNotice
 
 
 def invited_tender():

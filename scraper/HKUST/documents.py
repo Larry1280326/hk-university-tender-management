@@ -4,11 +4,10 @@ Only the invitation table's detail pages expose documents; open tenders show a
 "Request for Tender Document" contact instead, which the drafting flow handles.
 
 Requires ``accept_downloads=True`` on the browser context (see
-:meth:`scraper.auth.HKUSTAuthManager.get_context`), otherwise Chromium cancels the
+:meth:`scraper.HKUST.auth.HKUSTAuthManager.get_context`), otherwise Chromium cancels the
 response and ``page.expect_download`` never fires.
 """
 
-import re
 from pathlib import Path
 from typing import List, Optional
 
@@ -17,13 +16,14 @@ from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
 import config
 from scraper import browser_utils
-from scraper.tender_parser import (
+from scraper.HKUST.parser import (
     DETAIL_READY_SELECTOR,
     DIRECTORY_ROW_SELECTOR,
     INVITE_TABLE_SELECTOR,
     TENDER_ROW_SELECTOR,
-    TenderNotice,
 )
+from scraper.models import TenderNotice
+from scraper.paths import tender_dir_name
 
 LISTING_URL = config.HKUST_TENDER_OFFR_SEL_URL
 
@@ -31,23 +31,6 @@ LISTING_URL = config.HKUST_TENDER_OFFR_SEL_URL
 def _normalise(url: str) -> str:
     """Drop the portal's ``?dummy=`` cache-buster so URL comparisons are meaningful."""
     return url.split("?")[0].split("#")[0].rstrip("/")
-
-
-def safe_dir_name(name: str) -> str:
-    """Sanitize a project description or tender number into a safe single-segment folder name.
-
-    Preserves single spaces and standard punctuation while replacing path separators,
-    illegal filesystem characters, and ``..`` sequences with underscores.
-    """
-    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", name or "")
-    cleaned = re.sub(r"\.{2,}", "_", cleaned)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ._")
-    return cleaned or "tender"
-
-
-def tender_dir_name(tender: TenderNotice) -> str:
-    """Folder name for a tender's downloaded documents, preferring its project description."""
-    return safe_dir_name(tender.description or tender.tender_no)
 
 
 def _ensure_listing(page: Page) -> None:

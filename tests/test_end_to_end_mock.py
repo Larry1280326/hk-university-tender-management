@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 import config
-from scraper.tender_parser import TenderNotice
+from scraper.models import TenderNotice
 from mailer.template import generate_tender_email
 from mailer.webmail_helper import generate_gmail_compose_url, export_eml_file
 

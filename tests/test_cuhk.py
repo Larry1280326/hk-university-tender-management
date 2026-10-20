@@ -13,10 +13,10 @@ from playwright.sync_api import sync_playwright
 
 import app
 import config
-from scraper.cuhk_auth import CUHKAuthManager
-from scraper.cuhk_documents import _unique_filename, process_cuhk_tenders
-from scraper.cuhk_parser import CUHKTenderParser
-from scraper.tender_parser import TenderDocument, TenderNotice
+from scraper.CUHK.auth import CUHKAuthManager
+from scraper.CUHK.documents import _unique_filename, process_cuhk_tenders
+from scraper.CUHK.parser import CUHKTenderParser
+from scraper.models import TenderDocument, TenderNotice
 
 
 RFQ_LIST_ALL_CLOSED_HTML = """<!DOCTYPE html>

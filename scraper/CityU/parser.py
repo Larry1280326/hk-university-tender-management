@@ -23,7 +23,7 @@ from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
 import config
 from scraper import browser_utils
-from scraper.tender_parser import TenderDocument, TenderNotice
+from scraper.models import TenderDocument, TenderNotice
 
 DO_VIEW_REGEX = re.compile(r"doView\(['\"](\d+)['\"]\)")
 

@@ -16,8 +16,8 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
 import config
-from scraper.documents import tender_dir_name
-from scraper.tender_parser import TenderNotice
+from scraper.models import TenderNotice
+from scraper.paths import tender_dir_name
 
 FILE_ID_REGEX = re.compile(r"file_id=(\d+)")
 

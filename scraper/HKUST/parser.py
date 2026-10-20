@@ -20,13 +20,13 @@ The description is a ``<button class="tender-offer-dtl-dl-link">``, not an ancho
 """
 
 import re
-from dataclasses import dataclass, asdict, field
-from typing import List, Optional, Dict, Any, Callable, Tuple, Set
+from typing import Callable, List, Optional, Set, Tuple
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
 import config
 from scraper import browser_utils
+from scraper.models import TenderDocument, TenderNotice
 from mailer.email_parser import normalize_tender_ref
 
 EMAIL_REGEX = re.compile(r"([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)", re.IGNORECASE)
@@ -55,40 +55,6 @@ DETAIL_READY_SELECTOR = (
 COL_TENDER_NO = 0
 COL_DESCRIPTION = 1
 COL_CLOSING_DATE = 2
-
-
-@dataclass
-class TenderDocument:
-    """One downloadable file attached to an invited tender."""
-    doc_type: str
-    file_name: str
-    subject: str
-    updated_on: str
-    size: str
-
-
-@dataclass
-class TenderNotice:
-    """Structured data for an active HKUST Tender notice."""
-    tender_no: str
-    description: str
-    closing_date: str
-    contact_person: str
-    contact_email: str
-    contact_phone: Optional[str] = None
-    tender_type: Optional[str] = None
-    raw_enquiry: Optional[str] = None
-    already_processed: bool = False
-    # True when the row came from "My Tender Invitation / Interested Tender(s)"
-    # or when EOI has already been submitted on CUPro and documents are unlocked.
-    invited: bool = False
-    documents: List[TenderDocument] = field(default_factory=list)
-    portal_id: Optional[str] = None
-    category: str = "Tender"
-    needs_eoi: bool = False
-
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
 
 
 class TenderParser:

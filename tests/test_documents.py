@@ -6,8 +6,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import config
-from scraper.documents import download_tender_documents, safe_dir_name, tender_dir_name
-from scraper.tender_parser import TenderNotice
+from scraper.HKUST.documents import download_tender_documents
+from scraper.paths import safe_dir_name, tender_dir_name
+from scraper.models import TenderNotice
 
 
 class TestSafeDirName(unittest.TestCase):
@@ -59,7 +60,7 @@ class TestSafeDirName(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             doc_dir = Path(tmpdir)
             with patch.object(config, "DOCUMENT_DIR", doc_dir), patch(
-                "scraper.documents._download_one",
+                "scraper.HKUST.documents._download_one",
                 side_effect=lambda _page, t, root: [
                     root / tender_dir_name(t) / "doc.pdf"
                 ],

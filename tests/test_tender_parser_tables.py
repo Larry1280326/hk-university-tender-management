@@ -9,7 +9,8 @@ enquiry contact.
 import unittest
 from unittest.mock import MagicMock
 
-from scraper.tender_parser import TenderDocument, TenderParser
+from scraper.HKUST.parser import TenderParser
+from scraper.models import TenderDocument
 from tests.portal_fixtures import (
     DOCUMENT_DETAIL_HTML,
     ENQUIRY_DETAIL_HTML,

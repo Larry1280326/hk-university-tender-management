@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from playwright.sync_api import sync_playwright
 
-from scraper.tender_parser import TenderParser
+from scraper.HKUST.parser import TenderParser
 
 INVITE_TITLE = "My Tender Invitation / Interested Tender(s)"
 OPEN_TITLE = "Tender Notice"

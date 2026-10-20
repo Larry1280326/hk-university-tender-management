@@ -16,15 +16,16 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 import questionary
 
 import config
-from scraper.auth import HKUSTAuthManager
-from scraper.cityu_auth import CityUAuthManager
-from scraper.cityu_documents import process_cityu_tenders
-from scraper.cityu_parser import CityUTenderParser
-from scraper.cuhk_auth import CUHKAuthManager
-from scraper.cuhk_documents import process_cuhk_tenders
-from scraper.cuhk_parser import CUHKTenderParser
-from scraper.documents import download_tender_documents
-from scraper.tender_parser import TenderParser, TenderNotice
+from scraper.HKUST.auth import HKUSTAuthManager
+from scraper.HKUST.documents import download_tender_documents
+from scraper.HKUST.parser import TenderParser
+from scraper.CUHK.auth import CUHKAuthManager
+from scraper.CUHK.documents import process_cuhk_tenders
+from scraper.CUHK.parser import CUHKTenderParser
+from scraper.CityU.auth import CityUAuthManager
+from scraper.CityU.documents import process_cityu_tenders
+from scraper.CityU.parser import CityUTenderParser
+from scraper.models import TenderNotice
 from mailer.template import generate_tender_email, TenderEmailDraft
 from mailer.google_account import GoogleAccountMailer
 from mailer.webmail_helper import generate_gmail_compose_url, export_eml_file

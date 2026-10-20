@@ -9,9 +9,9 @@ from unittest.mock import MagicMock, patch
 from playwright.sync_api import sync_playwright
 
 import config
-from scraper.cityu_auth import CityUAuthManager
-from scraper.cityu_documents import _unique_filename, process_cityu_tenders
-from scraper.cityu_parser import CityUTenderParser
+from scraper.CityU.auth import CityUAuthManager
+from scraper.CityU.documents import _unique_filename, process_cityu_tenders
+from scraper.CityU.parser import CityUTenderParser
 
 BASE = "https://etender.cityu.edu.hk"
 

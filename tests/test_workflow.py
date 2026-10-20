@@ -6,7 +6,7 @@ import tempfile
 import config
 from mailer.template import generate_tender_email
 from mailer.webmail_helper import generate_gmail_compose_url, export_eml_file
-from scraper.tender_parser import EMAIL_REGEX, PHONE_REGEX
+from scraper.HKUST.parser import EMAIL_REGEX, PHONE_REGEX
 
 
 class TestTenderWorkflow(unittest.TestCase):

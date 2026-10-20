@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import MagicMock
 
-from scraper.tender_parser import OPEN_TABLE_SELECTOR, TenderParser
+from scraper.HKUST.parser import OPEN_TABLE_SELECTOR, TenderParser
 from mailer.email_parser import normalize_tender_ref
 from tests.portal_fixtures import OPEN_TITLE, parser_on, rendered_page, tender_table
 

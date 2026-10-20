@@ -30,7 +30,7 @@ from playwright.sync_api import sync_playwright
 
 import config
 from scraper import browser_utils
-from scraper.auth import LOGIN_READY_SELECTOR
+from scraper.HKUST.auth import LOGIN_READY_SELECTOR
 from scraper.browser_utils import NavigationError
 
 # How long the old wait condition is given before we call it hung.
