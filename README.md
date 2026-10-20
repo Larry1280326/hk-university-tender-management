@@ -227,8 +227,8 @@ To run the automated verification suite:
 uv run python -m unittest discover -s tests -v
 ```
 
-Of the 101 tests in the suite:
-- **94 unit tests run offline by default**, verifying mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, the interactive menu loop, tender selection, document download helpers, attachment validation, regex extraction, and `.env` dynamic loading without requiring network access.
+Of the 119 tests in the suite:
+- **112 unit tests run offline by default**, verifying mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, the interactive menu loop, tender selection, document download helpers, attachment validation, regex extraction, and `.env` dynamic loading without requiring network access.
 - **7 live-portal / slow-network integration tests are skipped by default** (`tests/test_portal_reachability.py` and `tests/test_portal_slow_network.py`). Enable them explicitly when testing against the live HKUST portal:
   ```bash
   RUN_LIVE_PORTAL_TEST=1 RUN_SLOW_NETWORK_TEST=1 uv run python -m unittest discover -s tests -v
@@ -256,7 +256,9 @@ reused rather than rebuilt:
 - **The IMAP mechanics in `mailer/google_account.py`** — `imap_session`,
   `_find_folder_by_flag`, `save_draft`, `get_handled_tenders`. `save_draft` already takes a
   `tag_prefix`, so a per-university Gmail label needs no IMAP change, only threading.
-- **The download loop in `scraper/documents.py`** — `safe_dir_name`, `_ensure_listing`,
+- **`scraper/paths.py`** — `safe_dir_name` / `tender_dir_name`, shared by the HKUST,
+  CUHK, and CityU downloaders.
+- **The HKUST download loop in `scraper/HKUST/documents.py`** — `_ensure_listing`,
   `_download_one`.
 - **All company/identity configuration** — `COMPANY_*`, `CONTACT_*`, `SIGN_OFF`,
   `BR_CERTIFICATE_PATH`, `GMAIL_*`, the two email templates.
@@ -268,8 +270,8 @@ per-university provider:
 
 | Where | What |
 |---|---|
-| `scraper/auth.py` | `HKUSTAuthManager`, `LOGIN_READY_SELECTOR`, `#vendorId` / `#password` / `#submitBtn` / `#tncChkBox` / `#warningModal`, the `/td_login` and `/td_welcome` URL markers, the reCAPTCHA handling |
-| `scraper/tender_parser.py` | `#inviteTenderList`, `#openTenderList`, `tr.tender-dtl-row`, `.tender-offer-dtl-dl-link`, `.doc-dl-btn`, the text-based `DETAIL_READY_SELECTOR`, the fixed column order, the `Enquiry` / `Request for Tender Document` row-heading matching |
+| `scraper/HKUST/auth.py` | `HKUSTAuthManager`, `LOGIN_READY_SELECTOR`, `#vendorId` / `#password` / `#submitBtn` / `#tncChkBox` / `#warningModal`, the `/td_login` and `/td_welcome` URL markers, the reCAPTCHA handling |
+| `scraper/HKUST/parser.py` | `#inviteTenderList`, `#openTenderList`, `tr.tender-dtl-row`, `.tender-offer-dtl-dl-link`, `.doc-dl-btn`, the text-based `DETAIL_READY_SELECTOR`, the fixed column order, the `Enquiry` / `Request for Tender Document` row-heading matching |
 | `config.py` | `HKUST_WELCOME_URL`, `HKUST_LOGIN_URL`, `HKUST_TENDER_OFFR_SEL_URL`, `HKUST_VENDOR_ID`, `HKUST_PASSWORD`, `HKUST_DOCUMENTS_DIR`, the five portal timeouts, `HKUST_MAIL_TAG` |
 | `mailer/email_parser.py` | `HKUST_TN_PATTERN`, `HKUST_CODE_PATTERN` — the ref formats the mailbox scan matches on |
 | `app.py`, `cli_views.py` | menu strings, banner, table titles |
@@ -281,19 +283,35 @@ nothing reads it.
 
 ### Target architecture
 
+Step 1 (models out) and the per-university directory split are done; the layout is
+now:
+
 ```
-models.py                    # TenderNotice, TenderDocument — no project imports at all
-universities/
-  __init__.py                # registry: all_providers(), get_provider(slug)
-  base.py                    # TenderProvider protocol, PlaywrightProvider base, PortalConfig
-  hkust/
-    provider.py              # identity, defaults, wiring
-    auth.py                  # ex-scraper/auth.py
-    parser.py                # ex-scraper/tender_parser.py
-    documents.py             # ex-scraper/documents.py
-    refs.py                  # the tender-number patterns
-scraper/browser_utils.py     # stays shared
+scraper/
+  __init__.py
+  browser_utils.py           # shared navigation/retry helpers
+  models.py                  # TenderNotice, TenderDocument — no project imports at all
+  paths.py                   # safe_dir_name / tender_dir_name, shared by all downloaders
+  HKUST/
+    auth.py
+    parser.py
+    documents.py
+  CUHK/
+    auth.py
+    parser.py
+    documents.py
+  CityU/
+    auth.py
+    parser.py
+    documents.py
+app.py                       # menu and per-university workflows
 mailer/email_parser.py       # keeps normalize_tender_ref / decode_mime_words
+
+# still to come:
+scraper/base.py              # TenderProvider protocol, PlaywrightProvider base, PortalConfig
+scraper/registry.py          # all_providers(), get_provider(slug)
+scraper/<SLUG>/provider.py   # identity, defaults, wiring
+scraper/<SLUG>/refs.py       # the tender-number patterns
 ```
 
 **A `Protocol`, not an ABC, at the boundary** — the implementations are structurally
@@ -357,8 +375,8 @@ university exists:
    `"2"` / `"3"` (`app.py`). At ten or more entries `"10. Exit".startswith("1")` is `True`,
    so Exit would dispatch into the scrape workflow. The flat list must route on the parsed
    leading integer.
-2. **`LISTING_URL` is bound at import time.** `scraper/tender_parser.py` and
-   `scraper/documents.py` both read `config.HKUST_TENDER_OFFR_SEL_URL` into a module or class
+2. **`LISTING_URL` is bound at import time.** `scraper/HKUST/parser.py` and
+   `scraper/HKUST/documents.py` both read `config.HKUST_TENDER_OFFR_SEL_URL` into a module or class
    constant, so the URL is fixed the moment the module is imported. A per-provider URL must
    become an instance attribute read at call time, or a second provider silently keeps
    pointing at HKUST.
@@ -375,9 +393,9 @@ change.
 
 | # | Step | Class |
 |---|---|---|
-| 1 | **Models out.** New root `models.py`; `scraper/tender_parser.py` re-exports `TenderNotice` / `TenderDocument`; add the defaulted `provider` field. Six importers keep working untouched. | `[move]` |
-| 2 | **HKUST code into its own package.** `universities/hkust/{auth,parser,documents,refs,provider}.py` from the three `scraper/*` modules; delete the dead `HKUST_TENDER_NOTICE_URL`; fix the `LISTING_URL` binding. | `[move]` |
-| 3 | **The interface and registry.** `universities/base.py` + `__init__.py`; `HKUSTProvider` wraps auth + parser + documents behind `fetch_tenders` / `download_documents`. `app.portal_session` moves into `PlaywrightProvider.portal_session`. | `[structure]` |
+| 1 | ✅ **Models out.** `scraper/models.py` now owns `TenderNotice` / `TenderDocument`; importers use it directly. Still to add: the defaulted `provider` field. | `[move]` |
+| 2 | ✅ **Per-university packages.** `scraper/{HKUST,CUHK,CityU}/{auth,parser,documents}.py`; shared `scraper/paths.py`. Still to do: delete the dead `HKUST_TENDER_NOTICE_URL` and fix the `LISTING_URL` binding. | `[move]` |
+| 3 | **The interface and registry.** `scraper/base.py` + `scraper/registry.py`; `HKUSTProvider` wraps auth + parser + documents behind `fetch_tenders` / `download_documents`. `app.portal_session` moves into `PlaywrightProvider.portal_session`. | `[structure]` |
 | 4 | **Config namespacing.** `load_portal_config()` in `config.py`; HKUST defaults move into its provider; the five neutral knobs are promoted with the old env spelling still honoured. | `[structure]` |
 | 5 | **Flat menu.** Choices built from the registry, separator, integer-prefix router replacing `startswith`. | `[UI]` |
 | 6 | **Multi-university mail.** Per-provider `extract_refs`; `get_processed_tender_numbers` scans **once** and then filters by owning university (an extra scan is another login on a slow link); hide key becomes `(slug, ref)`; the report line names the owning university. | `[behaviour]` |
