@@ -106,9 +106,9 @@ class TestMimeBuilderAndSession(unittest.TestCase):
     @patch("imaplib.IMAP4_SSL")
     def test_imap_session_refuses_to_connect_without_credentials(self, mock_imap_cls):
         """A missing App Password must fail loudly rather than attempt an anonymous login."""
-        with patch.object(config, "CONTACT_EMAIL", ""), patch.object(
-            config, "GMAIL_APP_PASSWORD", ""
-        ):
+        with patch.object(config, "GMAIL_USER", ""), patch.object(
+            config, "CONTACT_EMAIL", ""
+        ), patch.object(config, "GMAIL_APP_PASSWORD", ""):
             mailer = GoogleAccountMailer()
             self.assertFalse(mailer.is_configured())
 
@@ -173,9 +173,9 @@ class TestConnection(unittest.TestCase):
     """
 
     def test_missing_credentials_report_a_configuration_problem(self):
-        with patch.object(config, "CONTACT_EMAIL", ""), patch.object(
-            config, "GMAIL_APP_PASSWORD", ""
-        ):
+        with patch.object(config, "GMAIL_USER", ""), patch.object(
+            config, "CONTACT_EMAIL", ""
+        ), patch.object(config, "GMAIL_APP_PASSWORD", ""):
             success, message = GoogleAccountMailer().test_connection()
 
         self.assertFalse(success)

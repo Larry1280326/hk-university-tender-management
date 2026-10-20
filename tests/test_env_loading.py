@@ -45,6 +45,8 @@ class TestEnvLoading(unittest.TestCase):
             "CONTACT_EMAIL=alan.turing@dynamic-testing.com\n"
             "CONTACT_PHONE=85288889999\n"
             "COMPANY_ADDRESS=Tower B, Cyberport 4, Hong Kong\n"
+            "GMAIL_USER=alan.imap@gmail.com\n"
+            "HKUST_DOCUMENTS_DIR=custom_docs/tenders\n"
             'GMAIL_DRAFTS_URL=https://mail.google.com/mail/u/5/#drafts\n'
             'HKUST_MAIL_TAG=Custom-HKUST-Tag\n'
             'SIGN_OFF="Warmly,\\nAlan Turing\\nDynamic Testing Global Ltd"\n'
@@ -67,8 +69,13 @@ class TestEnvLoading(unittest.TestCase):
             self.assertEqual(config.CONTACT_EMAIL, "alan.turing@dynamic-testing.com")
             self.assertEqual(config.CONTACT_PHONE, "85288889999")
             self.assertEqual(config.COMPANY_ADDRESS, "Tower B, Cyberport 4, Hong Kong")
+            self.assertEqual(config.GMAIL_USER, "alan.imap@gmail.com")
+            self.assertEqual(config.DOCUMENTS_DIR, config.BASE_DIR / "custom_docs" / "tenders")
             self.assertEqual(config.GMAIL_DRAFTS_URL, "https://mail.google.com/mail/u/5/#drafts")
             self.assertEqual(config.HKUST_MAIL_TAG, "Custom-HKUST-Tag")
+
+            from mailer.google_account import GoogleAccountMailer
+            self.assertEqual(GoogleAccountMailer().username, "alan.imap@gmail.com")
 
             # 2. Check that the email template rendering uses these dynamic values
             from mailer.template import generate_tender_email
@@ -87,6 +94,7 @@ class TestEnvLoading(unittest.TestCase):
             self.assertIn("Warmly,\nAlan Turing\nDynamic Testing Global Ltd", draft.body)
 
             # Clean up and reload actual project .env
+            os.environ.pop("HKUST_DOCUMENTS_DIR", None)
             load_dotenv(config.BASE_DIR / ".env", override=True)
             importlib.reload(config)
 

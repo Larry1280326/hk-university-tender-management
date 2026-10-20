@@ -21,13 +21,13 @@ def _project_path(raw: str) -> Path:
     return path if path.is_absolute() else BASE_DIR / path
 
 
-# Downloaded tender documents, one subfolder per tender number.
-DOCUMENTS_DIR = _project_path(
-    os.getenv("HKUST_DOCUMENTS_DIR", str(BASE_DIR / "output_documents"))
-)
-
 # Load environment variables from .env
 load_dotenv(BASE_DIR / ".env")
+
+# Downloaded tender documents, one subfolder per tender number.
+DOCUMENTS_DIR = _project_path(
+    os.getenv("HKUST_DOCUMENTS_DIR", "") or str(BASE_DIR / "output_documents")
+)
 
 # HKUST Portal Config
 HKUST_WELCOME_URL = os.getenv(
@@ -119,11 +119,11 @@ SIGN_OFF = os.getenv("SIGN_OFF", "") or _build_default_sign_off()
 
 # Business Registration (BR) Certificate Path
 BR_CERTIFICATE_PATH = _project_path(
-    os.getenv("BR_CERTIFICATE_PATH", str(ASSETS_DIR / "br_certificate.pdf"))
+    os.getenv("BR_CERTIFICATE_PATH", "") or str(ASSETS_DIR / "br_certificate.pdf")
 )
 
 # Google Account Credentials (App Password / IMAP)
-GMAIL_USER = os.getenv("GMAIL_USER", os.getenv("CONTACT_EMAIL", ""))
+GMAIL_USER = os.getenv("GMAIL_USER", "") or os.getenv("CONTACT_EMAIL", "")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "").replace(" ", "")
 GMAIL_DRAFTS_URL = os.getenv("GMAIL_DRAFTS_URL", "https://mail.google.com/mail/#drafts")
 HKUST_MAIL_TAG = os.getenv("HKUST_MAIL_TAG", "HKUST Tenders")

@@ -37,7 +37,7 @@ class GoogleAccountMailer:
         username: Optional[str] = None,
         app_password: Optional[str] = None,
     ):
-        self.username = username or config.CONTACT_EMAIL
+        self.username = username or config.GMAIL_USER or config.CONTACT_EMAIL
         self.app_password = (
             app_password
             or config.GMAIL_APP_PASSWORD
