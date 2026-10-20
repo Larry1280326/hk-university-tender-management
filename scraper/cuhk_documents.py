@@ -59,7 +59,7 @@ def _open_view_page(page: Page, view_url: str, portal_id: str) -> None:
             [view_url, portal_id],
         )
     page.wait_for_selector(
-        "#MainContent", state="visible", timeout=config.DETAIL_TIMEOUT_MS
+        "#MainContent", state="attached", timeout=config.DETAIL_TIMEOUT_MS
     )
 
 
@@ -91,15 +91,18 @@ def _submit_eoi_if_needed(page: Page, tender: TenderNotice, view_url: str) -> No
             }"""
         )
     page.wait_for_selector(
-        "#MainContent", state="visible", timeout=config.DETAIL_TIMEOUT_MS
+        "input[name='response_type'][value='1']",
+        state="attached",
+        timeout=config.DETAIL_TIMEOUT_MS,
     )
 
-    page.locator("input[name='response_type'][value='1']").check()
     with page.expect_navigation(
         wait_until="domcontentloaded", timeout=config.NAV_TIMEOUT_MS
     ):
         page.evaluate(
             """() => {
+                const radio = document.querySelector("input[name='response_type'][value='1']");
+                if (radio) radio.checked = true;
                 const form = document.forms['PostForm'];
                 if (form) {
                     form.submit();
