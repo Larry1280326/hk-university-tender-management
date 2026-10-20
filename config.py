@@ -65,6 +65,27 @@ CUHK_RFQ_SEARCH_URL = os.getenv(
 CUHK_USER_ID = os.getenv("CUHK_USER_ID", "")
 CUHK_PASSWORD = os.getenv("CUHK_PASSWORD", "")
 
+# CityU (e-Tendering System) Portal Config. CityU runs the same ETS platform as CUHK,
+# so the Tender/RFQ search and View.aspx endpoints keep the same layout.
+CITYU_BASE_URL = os.getenv("CITYU_BASE_URL", "https://etender.cityu.edu.hk")
+CITYU_LOGIN_URL = os.getenv(
+    "CITYU_LOGIN_URL", f"{CITYU_BASE_URL}/Supplier/en/Login/index.aspx"
+)
+# AcceptTerms.aspx rejects a direct GET, so login starts at CITYU_LOGIN_URL and
+# submits its LoginForm to reach the declaration page.
+CITYU_ACCEPT_TERMS_URL = os.getenv(
+    "CITYU_ACCEPT_TERMS_URL",
+    f"{CITYU_BASE_URL}/Supplier/en/Login/AcceptTerms.aspx",
+)
+CITYU_TENDER_SEARCH_URL = os.getenv(
+    "CITYU_TENDER_SEARCH_URL", f"{CITYU_BASE_URL}/Supplier/en/Tender/Search.aspx"
+)
+CITYU_RFQ_SEARCH_URL = os.getenv(
+    "CITYU_RFQ_SEARCH_URL", f"{CITYU_BASE_URL}/Supplier/en/RFQ/Search.aspx"
+)
+CITYU_USER_ID = os.getenv("CITYU_USER_ID", "")
+CITYU_PASSWORD = os.getenv("CITYU_PASSWORD", "")
+
 
 def _env_raw(name: str, fallback_name: str = "") -> Tuple[str, str]:
     """Return ``(used_name, raw_value)`` checking ``name`` first, then ``fallback_name``."""
