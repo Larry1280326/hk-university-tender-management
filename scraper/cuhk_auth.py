@@ -188,14 +188,6 @@ class CUHKAuthManager:
             except Exception:
                 pass
 
-    def _accept_terms(self, page: Page) -> None:
-        """Tick all three declaration checkboxes on AcceptTerms.aspx and click Accept."""
-        checkboxes = page.locator("input[name='terms']")
-        count = checkboxes.count()
-        for i in range(count):
-            checkboxes.nth(i).check()
-        page.locator("input[value='Accept']").click(timeout=config.READY_TIMEOUT_MS)
-
     @staticmethod
     def _login_settled(page: Page, alerts: List[str]) -> bool:
         """True once the login submission has left /Login/ or raised an alert."""
