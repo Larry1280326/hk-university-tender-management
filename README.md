@@ -6,7 +6,7 @@ Automated workflow to:
 3. Scrape the offer selection page (`td_tender_offr_sel`), which renders **two separate tables**:
    - **My Tender Invitation / Interested Tender(s)** (`#inviteTenderList`) — tenders you were invited to. The portal has already released these documents, so the tool can download them directly.
    - **Tender Notice** (`#openTenderList`) — open tenders. No documents are released; the detail page carries the Purchasing Office contact to email instead.
-4. Show the two groups in separate tables, then allow interactive selection (individual checklist or select all).
+4. Open the interactive checklist directly for selection, grouped by invitation vs. open tender notice.
 5. Prompt to download tender documents (`PDF`s/files) for selected **invited tenders** into `output_documents/<tender_no>/` (configurable via `HKUST_DOCUMENTS_DIR`), and automatically draft personalized enquiry emails in **Gmail** (with company details and Business Registration certificate attached) for selected **open tenders**.
 
 ---
@@ -113,10 +113,10 @@ uv run python app.py
 ```
 
 #### Interactive Main Menu:
-- **1. HKUST — Scrape Tenders & Draft Emails**:
+- **1. HKUST**:
   1. Scans `Inbox`, `Drafts`, and `Sent` via IMAP to skip already-handled tenders.
   2. Logs in and scrapes both tender tables (`#inviteTenderList` and `#openTenderList`).
-  3. Presents an interactive selection menu (`1. Interactive Checklist`, `2. Select All tenders`, or `3. Back`).
+  3. Opens the interactive tender checklist directly (`Space` to toggle, `a` to select all, `i` to invert, `Enter` to confirm).
   4. If any **invited tenders** are selected, prompts to download their released documents into `output_documents/<safe_tender_no>/` (or `HKUST_DOCUMENTS_DIR`).
   5. If any **open tenders** are selected, verifies `BR_CERTIFICATE_PATH` exists, shows a sample email preview card, and lets you confirm draft creation (`1. Yes, Create Drafts in Gmail`), return to modify your selection (`2. Back to Selection`), or return to the main menu (`3. Back to Main Menu`).
 - **2. Test Google Account Connection**: Verifies Google App Password and IMAP connection (and reports the resolved localized Drafts folder).
@@ -144,8 +144,8 @@ uv run python app.py --visible
 
 1. **Already-handled check (runs before every scrape)**: the tool reads the **subject lines** of your
    Inbox, Drafts and Sent folders for the last `HKUST_MAIL_LOOKBACK_DAYS` days (default 60). A tender
-   found there is hidden from the tender list, and the run prints which mailbox each hidden tender was
-   found in. This is what makes a reply you sent count as handled — labels are never consulted, so
+   found there is hidden from the tender list, and the run reports the total number of handled tender
+   references found. This is what makes a reply you sent count as handled — labels are never consulted, so
    nothing has to be tagged for it to work.
 2. **Immediate Draft Tagging**: When drafts are created in Gmail, the `HKUST Tenders` label (configured by `HKUST_MAIL_TAG` in `.env`) is automatically attached to the newly saved drafts.
 
@@ -192,8 +192,8 @@ To run the automated verification suite:
 uv run python -m unittest discover -s tests -v
 ```
 
-Of the 102 tests in the suite:
-- **95 unit tests run offline by default**, verifying mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, the interactive menu loop, tender selection, document download helpers, attachment validation, regex extraction, and `.env` dynamic loading without requiring network access.
+Of the 101 tests in the suite:
+- **94 unit tests run offline by default**, verifying mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, the interactive menu loop, tender selection, document download helpers, attachment validation, regex extraction, and `.env` dynamic loading without requiring network access.
 - **7 live-portal / slow-network integration tests are skipped by default** (`tests/test_portal_reachability.py` and `tests/test_portal_slow_network.py`). Enable them explicitly when testing against the live HKUST portal:
   ```bash
   RUN_LIVE_PORTAL_TEST=1 RUN_SLOW_NETWORK_TEST=1 uv run python -m unittest discover -s tests -v
