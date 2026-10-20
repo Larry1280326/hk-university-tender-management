@@ -1,4 +1,4 @@
-"""Main CLI application for HKUST Vendor Automation & Gmail Drafting."""
+"""Main CLI application for HKUST, CUHK & CityU tender automation and Gmail drafting."""
 
 import argparse
 import sys
@@ -17,6 +17,9 @@ import questionary
 
 import config
 from scraper.auth import HKUSTAuthManager
+from scraper.cityu_auth import CityUAuthManager
+from scraper.cityu_documents import process_cityu_tenders
+from scraper.cityu_parser import CityUTenderParser
 from scraper.cuhk_auth import CUHKAuthManager
 from scraper.cuhk_documents import process_cuhk_tenders
 from scraper.cuhk_parser import CUHKTenderParser
@@ -81,6 +84,29 @@ def cuhk_portal_session(headless: bool = True):
             )
             auth_mgr.perform_login(page)
             yield page, CUHKTenderParser(page)
+        finally:
+            context.close()
+            browser.close()
+
+
+@contextmanager
+def cityu_portal_session(headless: bool = True):
+    """Yield a logged-in CityU ``(page, parser)`` and close the browser on exit."""
+    auth_mgr = CityUAuthManager(headless=headless)
+
+    with sync_playwright() as p:
+        console.print("[*] Launching Chromium browser...", style="cyan")
+        browser = p.chromium.launch(headless=headless)
+        context = auth_mgr.get_context(browser)
+        page = context.new_page()
+
+        try:
+            console.print(
+                f"[*] Logging into CityU e-Tendering as User ID: {config.CITYU_USER_ID}...",
+                style="cyan",
+            )
+            auth_mgr.perform_login(page)
+            yield page, CityUTenderParser(page)
         finally:
             context.close()
             browser.close()
@@ -508,6 +534,92 @@ def run_cuhk_workflow(headless: bool = True) -> None:
     handle_cuhk_selection_and_download(tenders, headless=headless)
 
 
+def handle_cityu_selection_and_download(
+    tenders: List[TenderNotice],
+    headless: bool = True,
+) -> None:
+    """Interactive selection, EOI submission, and document download for CityU tenders."""
+    if not tenders:
+        return
+
+    selected = select_suitable_tenders(
+        tenders,
+        invited_heading="Expression of Interest Submitted / Invited",
+        open_heading="Open Tender Notice (Submit EOI & Download)",
+    )
+
+    if selected is None:
+        console.print("[cyan]Returning to the main menu...[/cyan]")
+        return
+
+    if not selected:
+        console.print("[yellow]No tenders selected - returning to the main menu.[/yellow]")
+        return
+
+    eoi_needed = [t for t in selected if t.needs_eoi]
+    total_count = len(selected)
+    if eoi_needed:
+        prompt_msg = (
+            f"Submit EOI for {len(eoi_needed)} open tender(s) and download documents "
+            f"for {total_count} selected tender(s)?"
+        )
+    else:
+        prompt_msg = f"Download tender documents for {total_count} selected tender(s)?"
+
+    if not questionary.confirm(prompt_msg, default=True).ask():
+        console.print("[yellow]Skipped CityU tender processing.[/yellow]")
+        return
+
+    cityu_docs_dir = config.DOCUMENT_DIR / "CityU"
+    console.print(
+        f"[*] Processing CityU tender(s) and downloading documents to "
+        f"[bold]{cityu_docs_dir}[/bold]...",
+        style="cyan",
+    )
+    try:
+        with cityu_portal_session(headless=headless) as (page, _parser):
+            saved = process_cityu_tenders(page, selected)
+    except Exception as e:
+        console.print(f"[bold red]CityU processing failed:[/bold red] {type(e).__name__}: {e}")
+        return
+
+    if not saved:
+        console.print("[yellow]No documents were downloaded.[/yellow]")
+        return
+
+    console.print(f"[bold green][OK] Downloaded {len(saved)} document(s):[/bold green]")
+    for path in saved:
+        console.print(f"  * {path.name} [dim](CityU/{path.parent.name})[/dim]")
+
+
+def run_cityu_workflow(headless: bool = True) -> None:
+    """Scrape active CityU RFQs & Tenders, select, submit EOI if needed, and download."""
+    if not config.CITYU_USER_ID or not config.CITYU_PASSWORD:
+        console.print(
+            "[bold red][!] CityU credentials missing![/bold red] "
+            "Please configure CITYU_USER_ID and CITYU_PASSWORD in your .env file."
+        )
+        return
+
+    mode = "headless" if headless else "visible"
+    console.print(f"[*] Fetching active CityU RFQs and Tenders ({mode})...", style="cyan")
+
+    try:
+        with cityu_portal_session(headless=headless) as (_page, parser):
+            tenders = scrape_tenders(parser)
+    except Exception as e:
+        console.print(f"[bold red]CityU Scraper Error:[/bold red] {type(e).__name__}: {e}")
+        if config.DEBUG_ARTIFACTS:
+            console.print_exception(show_locals=False)
+        return
+
+    if not tenders:
+        console.print("[yellow]No active CityU tenders or RFQs found.[/yellow]")
+        return
+
+    handle_cityu_selection_and_download(tenders, headless=headless)
+
+
 def interactive_menu() -> bool:
     """Show the main menu once and route the choice.
 
@@ -519,14 +631,15 @@ def interactive_menu() -> bool:
         choices=[
             "1. HKUST",
             "2. CUHK",
-            "3. Test Google Account Connection",
-            "4. Exit",
+            "3. CityU",
+            "4. Test Google Account Connection",
+            "5. Exit",
         ],
     ).ask()
 
     # questionary answers None when the prompt itself is interrupted, which is also a
     # request to leave rather than to carry on.
-    if not choice or choice.startswith("4"):
+    if not choice or choice.startswith("5"):
         console.print("[yellow]Exiting.[/yellow]")
         return False
 
@@ -537,6 +650,9 @@ def interactive_menu() -> bool:
         run_cuhk_workflow(headless=True)
 
     elif choice.startswith("3"):
+        run_cityu_workflow(headless=True)
+
+    elif choice.startswith("4"):
         console.print(f"[*] Testing Google App Password connection for {config.GMAIL_USER}...", style="cyan")
         mailer = GoogleAccountMailer()
         success, msg = mailer.test_connection()
@@ -551,7 +667,7 @@ def interactive_menu() -> bool:
 def parse_cli_args():
     """Configure and parse command-line flags."""
     parser = argparse.ArgumentParser(
-        description="HKUST e-Tendering Portal Automation & Gmail Drafter",
+        description="University e-Tendering Portal Automation & Gmail Drafter",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--test", action="store_true", help="Test Google IMAP / App Password connection")

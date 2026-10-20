@@ -297,7 +297,7 @@ class TestMainMenuLoop(unittest.TestCase):
 
     def test_exit_closes_the_menu(self):
         with patch.object(app, "questionary") as q:
-            q.select.return_value.ask.return_value = "4. Exit"
+            q.select.return_value.ask.return_value = "5. Exit"
 
             self.assertFalse(app.interactive_menu())
 
@@ -328,9 +328,19 @@ class TestMainMenuLoop(unittest.TestCase):
 
         workflow.assert_called_once()
 
+    def test_running_cityu_workflow_leaves_the_menu_open(self):
+        with patch.object(app, "questionary") as q, patch.object(
+            app, "run_cityu_workflow"
+        ) as workflow:
+            q.select.return_value.ask.return_value = "3. CityU"
+
+            self.assertTrue(app.interactive_menu())
+
+        workflow.assert_called_once()
+
     def test_testing_the_connection_leaves_the_menu_open(self):
         with patch.object(app, "questionary") as q, patch.object(app, "GoogleAccountMailer") as mailer:
-            q.select.return_value.ask.return_value = "3. Test Google Account Connection"
+            q.select.return_value.ask.return_value = "4. Test Google Account Connection"
             mailer.return_value.test_connection.return_value = (True, "ok")
 
             self.assertTrue(app.interactive_menu())
@@ -342,7 +352,8 @@ class TestMainMenuLoop(unittest.TestCase):
         answers = iter([
             "1. HKUST",
             "2. CUHK",
-            "4. Exit",
+            "3. CityU",
+            "5. Exit",
         ])
         with patch("sys.argv", ["app.py"]), patch.object(
             app, "display_welcome_banner"
@@ -350,13 +361,16 @@ class TestMainMenuLoop(unittest.TestCase):
             app, "run_tender_workflow"
         ) as hkust_workflow, patch.object(
             app, "run_cuhk_workflow"
-        ) as cuhk_workflow:
+        ) as cuhk_workflow, patch.object(
+            app, "run_cityu_workflow"
+        ) as cityu_workflow:
             q.select.return_value.ask.side_effect = lambda: next(answers)
 
             app.main()
 
         self.assertEqual(hkust_workflow.call_count, 1)
         self.assertEqual(cuhk_workflow.call_count, 1)
+        self.assertEqual(cityu_workflow.call_count, 1)
 
 
 if __name__ == "__main__":
