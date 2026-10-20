@@ -15,7 +15,8 @@ On a tender's detail page (``View.aspx``):
 """
 
 import re
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from datetime import date
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
@@ -59,26 +60,34 @@ class CUHKTenderParser:
         ):
             return False
 
+        self.page.wait_for_load_state("domcontentloaded", timeout=config.NAV_TIMEOUT_MS)
+
         # If the page is Search.aspx (not already List.aspx), submit PostForm to Filter.aspx
-        # which redirects to List.aspx sorted by Issue Date descending (order=2).
+        # sorted by Issue Date descending (order=2) and filtered to Closing Date >= today
+        # so the server does not query and paginate hundreds of historical closed notices.
         if self.page.locator("form[name='ViewForm']").count() == 0:
-            self.page.wait_for_selector(
-                "#MainContent", state="visible", timeout=config.READY_TIMEOUT_MS
-            )
-            self.page.evaluate(
-                """() => {
-                    const form = document.forms['PostForm'];
-                    if (form) {
-                        const orderSelect = form.querySelector("select[name='order']");
-                        if (orderSelect) orderSelect.value = '2';
-                        form.submit();
-                    }
-                }"""
-            )
-            self.page.wait_for_url("**/List.aspx*", timeout=config.NAV_TIMEOUT_MS)
-            self.page.wait_for_load_state(
-                "domcontentloaded", timeout=config.NAV_TIMEOUT_MS
-            )
+            today = date.today()
+            y, m, d = f"{today.year:04d}", f"{today.month:02d}", f"{today.day:02d}"
+            with self.page.expect_navigation(
+                wait_until="domcontentloaded", timeout=config.NAV_TIMEOUT_MS
+            ):
+                self.page.evaluate(
+                    """([year, month, day]) => {
+                        const form = document.forms['PostForm'];
+                        if (form) {
+                            const setVal = (name, val) => {
+                                const el = form.querySelector(`[name='${name}']`);
+                                if (el) el.value = val;
+                            };
+                            setVal('date_closed_from_1', year);
+                            setVal('date_closed_from_2', month);
+                            setVal('date_closed_from_3', day);
+                            setVal('order', '2');
+                            form.submit();
+                        }
+                    }""",
+                    [y, m, d],
+                )
 
         self.page.wait_for_selector(
             "table tr.trtext1, div.headtext1",
@@ -163,56 +172,76 @@ class CUHKTenderParser:
 
         return issued_items
 
-    def _open_detail_page(self, view_url: str, portal_id: str) -> None:
-        """Open View.aspx for ``portal_id`` by POSTing ``tender_id``."""
-        with self.page.expect_navigation(
-            wait_until="domcontentloaded", timeout=config.NAV_TIMEOUT_MS
-        ):
-            self.page.evaluate(
-                """([actionUrl, tenderId]) => {
-                    let form = document.forms['ViewForm'];
-                    if (!form) {
-                        if (!document.body || document.body.tagName === 'FRAMESET') {
-                            document.documentElement.innerHTML = '<body></body>';
+    def _fetch_and_parse_detail(
+        self, view_url: str, portal_id: str
+    ) -> Tuple[str, str, Optional[str], bool, bool, List[TenderDocument]]:
+        """Fetch View.aspx via in-page fetch() + DOMParser and extract details.
+
+        Avoids full browser navigations and repeated subresource loads for each
+        tender detail page.
+        """
+        data = self.page.evaluate(
+            """async ([actionUrl, tenderId]) => {
+                const resp = await fetch(actionUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: 'Page=1&tender_id=' + encodeURIComponent(tenderId),
+                    credentials: 'include'
+                });
+                const html = await resp.text();
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+                const main = doc.querySelector('#MainContent') || doc;
+
+                const fields = {};
+                for (const row of main.querySelectorAll('table tr')) {
+                    const cells = Array.from(row.querySelectorAll('td'));
+                    let idx = 0;
+                    while (idx + 1 < cells.length) {
+                        const cls = cells[idx].getAttribute('class') || '';
+                        if (cls.includes('tdtext1')) {
+                            const label = (cells[idx].textContent || '').replace(/\\s+/g, ' ').trim();
+                            const val = (cells[idx + 1].textContent || '').replace(/\\s+/g, ' ').trim();
+                            if (label) {
+                                fields[label.toLowerCase()] = val;
+                            }
+                            idx += 2;
+                        } else {
+                            idx += 1;
                         }
-                        form = document.createElement('form');
-                        form.method = 'post';
-                        document.body.appendChild(form);
                     }
-                    form.action = actionUrl;
-                    let input = form.querySelector("input[name='tender_id']");
-                    if (!input) {
-                        input = document.createElement('input');
-                        input.type = 'hidden';
-                        input.name = 'tender_id';
-                        form.appendChild(input);
+                }
+
+                const hasEoiButton = Boolean(
+                    main.querySelector(
+                        "form[name='NewEOI'], input[value='Expression of Interest']"
+                    )
+                );
+
+                const docs = [];
+                const seenHrefs = new Set();
+                if (!hasEoiButton) {
+                    for (const link of main.querySelectorAll("a[href*='DownloadFile.aspx']")) {
+                        const href = (link.getAttribute('href') || '').trim();
+                        if (!href || seenHrefs.has(href)) continue;
+                        seenHrefs.add(href);
+
+                        const title = (link.getAttribute('title') || '').replace(/\\s+/g, ' ').trim();
+                        const tr = link.closest('tr');
+                        const cells = tr
+                            ? Array.from(tr.children)
+                                  .filter(c => c.tagName === 'TD')
+                                  .map(td => (td.textContent || '').replace(/\\s+/g, ' ').trim())
+                            : [];
+                        docs.push({ href, title, cells });
                     }
-                    input.value = tenderId;
-                    form.submit();
-                }""",
-                [view_url, portal_id],
-            )
-        self.page.wait_for_selector(
-            "#MainContent", state="visible", timeout=config.DETAIL_TIMEOUT_MS
+                }
+
+                return { fields, hasEoiButton, docs };
+            }""",
+            [view_url, portal_id],
         )
 
-    def _parse_contact_details(self) -> Tuple[str, str, Optional[str]]:
-        """Extract contact person, email, and phone from View.aspx's Contact table."""
-        fields: Dict[str, str] = {}
-        for row in self.page.locator("#MainContent table tr").all():
-            cells = row.locator("td").all()
-            idx = 0
-            while idx + 1 < len(cells):
-                cls = cells[idx].get_attribute("class") or ""
-                if "tdtext1" in cls:
-                    label = _clean_text(cells[idx].inner_text())
-                    val = _clean_text(cells[idx + 1].inner_text())
-                    if label:
-                        fields[label.lower()] = val
-                    idx += 2
-                else:
-                    idx += 1
-
+        fields: Dict[str, str] = data.get("fields", {})
         email = fields.get("#1 email address") or fields.get("#2 email address") or ""
         phone = fields.get("#1 tel. number") or fields.get("#2 tel. number") or None
 
@@ -225,29 +254,14 @@ class CUHKTenderParser:
         else:
             person = "Sir/Madam"
 
-        return person, email, phone
+        if data.get("hasEoiButton"):
+            return person, email, phone, False, True, []
 
-    def _parse_document_list(self) -> List[TenderDocument]:
-        """Parse all downloadable files unlocked on View.aspx."""
         documents: List[TenderDocument] = []
-        seen_hrefs: Set[str] = set()
-
-        for link in self.page.locator("#MainContent a[href*='DownloadFile.aspx']").all():
-            href = (link.get_attribute("href") or "").strip()
-            if not href or href in seen_hrefs:
-                continue
-            seen_hrefs.add(href)
-
-            title = _clean_text(link.get_attribute("title") or "")
-            row_info = link.evaluate(
-                """(el) => {
-                    const tr = el.closest('tr');
-                    if (!tr) return { cells: [] };
-                    const tds = Array.from(tr.children).filter(c => c.tagName === 'TD');
-                    return { cells: tds.map(td => td.innerText.trim()) };
-                }"""
-            )
-            cells: List[str] = row_info.get("cells", [])
+        for raw_doc in data.get("docs", []):
+            href = raw_doc.get("href", "")
+            title = _clean_text(raw_doc.get("title", ""))
+            cells: List[str] = raw_doc.get("cells", [])
 
             if len(cells) >= 3:
                 subject = _clean_text(cells[0])
@@ -273,23 +287,7 @@ class CUHKTenderParser:
                 )
             )
 
-        return documents
-
-    def _parse_detail_page(self) -> Tuple[str, str, Optional[str], bool, bool, List[TenderDocument]]:
-        """Inspect View.aspx for contact details, EOI requirement, and unlocked files."""
-        contact_person, contact_email, contact_phone = self._parse_contact_details()
-        has_eoi_button = (
-            self.page.locator(
-                "#MainContent form[name='NewEOI'], "
-                "#MainContent input[value='Expression of Interest']"
-            ).count()
-            > 0
-        )
-        if has_eoi_button:
-            return contact_person, contact_email, contact_phone, False, True, []
-
-        documents = self._parse_document_list()
-        return contact_person, contact_email, contact_phone, True, False, documents
+        return person, email, phone, True, False, documents
 
     def extract_tenders(
         self,
@@ -317,7 +315,6 @@ class CUHKTenderParser:
             documents: List[TenderDocument] = []
 
             try:
-                self._open_detail_page(item["view_url"], item["portal_id"])
                 (
                     contact_person,
                     contact_email,
@@ -325,7 +322,7 @@ class CUHKTenderParser:
                     invited,
                     needs_eoi,
                     documents,
-                ) = self._parse_detail_page()
+                ) = self._fetch_and_parse_detail(item["view_url"], item["portal_id"])
             except (PlaywrightTimeoutError, PlaywrightError) as e:
                 print(
                     f"[!] CUHK detail page for {tender_no} not parsed: "
