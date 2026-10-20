@@ -85,10 +85,10 @@ class NavigateRetryTests(unittest.TestCase):
     def setUp(self):
         self.clock = FakeClock()
         self.addCleanup(patch.stopall)
-        patch.object(config, "HKUST_DEBUG_ARTIFACTS", False).start()
-        patch.object(config, "HKUST_NAV_ATTEMPTS", 3).start()
-        patch.object(config, "HKUST_NAV_BACKOFF_SECONDS", 2.0).start()
-        patch.object(config, "HKUST_NAV_TIMEOUT_MS", 15000).start()
+        patch.object(config, "DEBUG_ARTIFACTS", False).start()
+        patch.object(config, "NAV_ATTEMPTS", 3).start()
+        patch.object(config, "NAV_BACKOFF_SECONDS", 2.0).start()
+        patch.object(config, "NAV_TIMEOUT_MS", 15000).start()
         patch.object(browser_utils, "time", self.clock).start()
         self.print_patch = patch("builtins.print").start()
 
@@ -189,7 +189,7 @@ class NavigateRetryTests(unittest.TestCase):
     def test_network_reset_not_retried_when_disabled(self):
         page = FakePage(goto=raise_always(PlaywrightError("net::ERR_CONNECTION_RESET")))
 
-        with patch.object(config, "HKUST_RETRY_ON_NET_ERRORS", False):
+        with patch.object(config, "RETRY_ON_NET_ERRORS", False):
             with self.assertRaises(PlaywrightError):
                 browser_utils.navigate(page, "https://example.test/login")
 
@@ -327,7 +327,7 @@ class FailureArtifactTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             page = FakePage()
             with patch.object(config, "ASSETS_DIR", Path(tmp)), patch.object(
-                config, "HKUST_DEBUG_ARTIFACTS", True
+                config, "DEBUG_ARTIFACTS", True
             ), patch("builtins.print"):
                 path = browser_utils.dump_failure_artifacts(page, "login page")
 
@@ -338,14 +338,14 @@ class FailureArtifactTests(unittest.TestCase):
             self.assertEqual(page.screenshots, [str(path)])
 
     def test_disabled_by_config(self):
-        with patch.object(config, "HKUST_DEBUG_ARTIFACTS", False):
+        with patch.object(config, "DEBUG_ARTIFACTS", False):
             self.assertIsNone(browser_utils.dump_failure_artifacts(FakePage(), "login"))
 
     def test_dump_failure_never_masks_the_original_error(self):
         page = FakePage()
         page.screenshot = raise_always(PlaywrightError("browser closed"))
 
-        with patch.object(config, "HKUST_DEBUG_ARTIFACTS", True), patch("builtins.print"):
+        with patch.object(config, "DEBUG_ARTIFACTS", True), patch("builtins.print"):
             self.assertIsNone(browser_utils.dump_failure_artifacts(page, "login"))
 
 

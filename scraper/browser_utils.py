@@ -48,7 +48,7 @@ class NavigationError(RuntimeError):
 
 
 # Network-level failures that a fresh request will very likely get past. Timeouts
-# are always retried; these are retried only when HKUST_RETRY_ON_NET_ERRORS is on,
+# are always retried; these are retried only when RETRY_ON_NET_ERRORS is on,
 # because a saturated link surfaces as a reset rather than as a timeout.
 _RETRYABLE_NET_MARKERS = (
     "net::ERR_TIMED_OUT",
@@ -198,7 +198,7 @@ _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 def dump_failure_artifacts(page: Page, label: str) -> Optional[Path]:
     """Write a screenshot and the page HTML for post-mortem, never masking the original error."""
-    if not config.HKUST_DEBUG_ARTIFACTS:
+    if not config.DEBUG_ARTIFACTS:
         return None
     try:
         debug_dir = config.ASSETS_DIR / "debug"
@@ -236,9 +236,9 @@ def navigate(
     """
     attach_tracker(page)
 
-    attempts = max(1, config.HKUST_NAV_ATTEMPTS if attempts is None else attempts)
-    timeout_ms = config.HKUST_NAV_TIMEOUT_MS if timeout_ms is None else timeout_ms
-    backoff = config.HKUST_NAV_BACKOFF_SECONDS if backoff_seconds is None else backoff_seconds
+    attempts = max(1, config.NAV_ATTEMPTS if attempts is None else attempts)
+    timeout_ms = config.NAV_TIMEOUT_MS if timeout_ms is None else timeout_ms
+    backoff = config.NAV_BACKOFF_SECONDS if backoff_seconds is None else backoff_seconds
     label = label or url
 
     stage = "goto"
@@ -261,7 +261,7 @@ def navigate(
             return True
         except (PlaywrightTimeoutError, PlaywrightError) as e:
             last_error = e
-            if not _is_retryable(e, config.HKUST_RETRY_ON_NET_ERRORS):
+            if not _is_retryable(e, config.RETRY_ON_NET_ERRORS):
                 raise
 
     if allow_missing and stage == "selector":

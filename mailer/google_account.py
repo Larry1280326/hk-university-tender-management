@@ -125,7 +125,7 @@ class GoogleAccountMailer:
                 raise RuntimeError(f"Failed to append draft to {drafts_folder}: {data}")
 
             if apply_tags:
-                prefix = tag_prefix or config.HKUST_MAIL_TAG
+                prefix = tag_prefix or config.MAIL_TAG
                 tags_to_apply = [prefix]
 
                 # Ensure label exists in Gmail
@@ -246,7 +246,7 @@ class GoogleAccountMailer:
         if not self.is_configured():
             return {}
 
-        days = config.HKUST_MAIL_LOOKBACK_DAYS if lookback_days is None else lookback_days
+        days = config.MAIL_LOOKBACK_DAYS if lookback_days is None else lookback_days
         since = (date.today() - timedelta(days=max(1, days))).strftime("%d-%b-%Y")
         criteria = f"(SINCE {since})"
 

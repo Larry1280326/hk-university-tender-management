@@ -79,9 +79,13 @@ class TenderNotice:
     tender_type: Optional[str] = None
     raw_enquiry: Optional[str] = None
     already_processed: bool = False
-    # True when the row came from "My Tender Invitation / Interested Tender(s)".
+    # True when the row came from "My Tender Invitation / Interested Tender(s)"
+    # or when EOI has already been submitted on CUPro and documents are unlocked.
     invited: bool = False
     documents: List[TenderDocument] = field(default_factory=list)
+    portal_id: Optional[str] = None
+    category: str = "Tender"
+    needs_eoi: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -114,14 +118,14 @@ class TenderParser:
             return
         try:
             self.page.go_back(
-                wait_until="domcontentloaded", timeout=config.HKUST_NAV_TIMEOUT_MS
+                wait_until="domcontentloaded", timeout=config.NAV_TIMEOUT_MS
             )
             if not self._on_listing_page():
                 raise PlaywrightTimeoutError("go_back did not return to the offer selection page")
             self.page.wait_for_selector(
                 DIRECTORY_ROW_SELECTOR,
                 state="attached",
-                timeout=config.HKUST_READY_TIMEOUT_MS,
+                timeout=config.READY_TIMEOUT_MS,
             )
         except (PlaywrightTimeoutError, PlaywrightError):
             browser_utils.navigate(
@@ -135,11 +139,11 @@ class TenderParser:
         """Click a row's description button and wait for its detail page to render."""
         row = self.page.locator(f"{table_selector} {TENDER_ROW_SELECTOR}").nth(row_index)
         row.locator(".tender-offer-dtl-dl-link").first.click(
-            timeout=config.HKUST_DETAIL_TIMEOUT_MS
+            timeout=config.DETAIL_TIMEOUT_MS
         )
-        self.page.wait_for_load_state("domcontentloaded", timeout=config.HKUST_NAV_TIMEOUT_MS)
+        self.page.wait_for_load_state("domcontentloaded", timeout=config.NAV_TIMEOUT_MS)
         self.page.wait_for_selector(
-            DETAIL_READY_SELECTOR, state="attached", timeout=config.HKUST_DETAIL_TIMEOUT_MS
+            DETAIL_READY_SELECTOR, state="attached", timeout=config.DETAIL_TIMEOUT_MS
         )
 
     def _parse_document_list(self) -> List[TenderDocument]:

@@ -40,9 +40,9 @@ class TestPortalReachability(unittest.TestCase):
                     tnc_box = page.locator("#tncChkBox")
                     tnc_box.check()
                     self.assertTrue(tnc_box.is_checked(), "Failed to check terms checkbox")
-                    page.click("#submitBtn", timeout=config.HKUST_READY_TIMEOUT_MS)
+                    page.click("#submitBtn", timeout=config.READY_TIMEOUT_MS)
 
-                page.wait_for_selector("#vendorId:visible", timeout=config.HKUST_READY_TIMEOUT_MS)
+                page.wait_for_selector("#vendorId:visible", timeout=config.READY_TIMEOUT_MS)
 
                 is_login_page = "/td_login" in page.url or page.locator("#vendorId").count() > 0
                 self.assertTrue(is_login_page, "Did not reach logon page after accepting terms")
@@ -59,7 +59,7 @@ class TestPortalReachability(unittest.TestCase):
                 browser_utils.wait_for_predicate(
                     page,
                     browser_utils.is_recaptcha_callable,
-                    timeout_ms=config.HKUST_SCRIPT_TIMEOUT_MS,
+                    timeout_ms=config.SCRIPT_TIMEOUT_MS,
                     label="the reCAPTCHA library",
                     url=config.HKUST_LOGIN_URL,
                 )

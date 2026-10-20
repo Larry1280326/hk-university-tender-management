@@ -28,8 +28,8 @@ class HKUSTAuthManager:
         context = browser.new_context(
             viewport={"width": 1400, "height": 900}, accept_downloads=True
         )
-        context.set_default_navigation_timeout(config.HKUST_NAV_TIMEOUT_MS)
-        context.set_default_timeout(config.HKUST_READY_TIMEOUT_MS)
+        context.set_default_navigation_timeout(config.NAV_TIMEOUT_MS)
+        context.set_default_timeout(config.READY_TIMEOUT_MS)
         return context
 
     def perform_login(
@@ -59,7 +59,7 @@ class HKUSTAuthManager:
         self._accept_terms_if_present(page)
 
         print("[*] Waiting for login form...")
-        page.wait_for_selector("#vendorId:visible", timeout=config.HKUST_READY_TIMEOUT_MS)
+        page.wait_for_selector("#vendorId:visible", timeout=config.READY_TIMEOUT_MS)
 
         print(f"[*] Entering Vendor ID: {v_id}")
         self._fill_credentials(page, v_id, v_pwd)
@@ -70,7 +70,7 @@ class HKUSTAuthManager:
         self._ensure_recaptcha_callable(page, v_id, v_pwd)
 
         print("[*] Submitting login credentials...")
-        page.locator("#submitBtn").click(timeout=config.HKUST_READY_TIMEOUT_MS)
+        page.locator("#submitBtn").click(timeout=config.READY_TIMEOUT_MS)
         self._wait_for_login_result(page)
 
         # Check for login errors
@@ -88,7 +88,7 @@ class HKUSTAuthManager:
 
     def _fill_credentials(self, page: Page, v_id: str, v_pwd: str) -> None:
         """Fill the login form. Re-run after any reload, which wipes the fields."""
-        page.wait_for_selector("#vendorId:visible", timeout=config.HKUST_READY_TIMEOUT_MS)
+        page.wait_for_selector("#vendorId:visible", timeout=config.READY_TIMEOUT_MS)
         page.locator("#vendorId:visible").fill(v_id)
         page.locator("#password:visible").fill(v_pwd)
 
@@ -105,9 +105,9 @@ class HKUSTAuthManager:
                 if (typeof $ !== 'undefined') $(el).prop('checked', true).trigger('change');
             }
         }""")
-        page.locator("#submitBtn").click(timeout=config.HKUST_READY_TIMEOUT_MS)
+        page.locator("#submitBtn").click(timeout=config.READY_TIMEOUT_MS)
         try:
-            page.wait_for_url("**/td_login*", timeout=config.HKUST_READY_TIMEOUT_MS)
+            page.wait_for_url("**/td_login*", timeout=config.READY_TIMEOUT_MS)
         except PlaywrightTimeoutError:
             browser_utils.navigate(
                 page,
@@ -123,13 +123,13 @@ class HKUSTAuthManager:
         script whose fetch already failed. Only a fresh document does, so a retry
         reloads the page rather than extending the timeout.
         """
-        attempts = max(1, config.HKUST_NAV_ATTEMPTS)
+        attempts = max(1, config.NAV_ATTEMPTS)
         for attempt in range(1, attempts + 1):
             try:
                 browser_utils.wait_for_predicate(
                     page,
                     browser_utils.is_recaptcha_callable,
-                    timeout_ms=config.HKUST_SCRIPT_TIMEOUT_MS,
+                    timeout_ms=config.SCRIPT_TIMEOUT_MS,
                     label="the reCAPTCHA library",
                     url=config.HKUST_LOGIN_URL,
                 )
@@ -180,12 +180,12 @@ class HKUSTAuthManager:
 
     def _wait_for_login_result(self, page: Page) -> None:
         """Wait for the login POST to settle before inspecting the result."""
-        page.wait_for_load_state("domcontentloaded", timeout=config.HKUST_NAV_TIMEOUT_MS)
+        page.wait_for_load_state("domcontentloaded", timeout=config.NAV_TIMEOUT_MS)
         try:
             browser_utils.wait_for_predicate(
                 page,
                 self._login_settled,
-                timeout_ms=config.HKUST_POST_LOGIN_TIMEOUT_MS,
+                timeout_ms=config.POST_LOGIN_TIMEOUT_MS,
                 label="the login result",
                 url=config.HKUST_LOGIN_URL,
             )

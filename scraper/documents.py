@@ -33,9 +33,21 @@ def _normalise(url: str) -> str:
     return url.split("?")[0].split("#")[0].rstrip("/")
 
 
-def safe_dir_name(tender_no: str) -> str:
-    """Turn a tender number into a folder name: ``TNA2600106 EOI`` -> ``TNA2600106_EOI``."""
-    return re.sub(r"[^A-Za-z0-9._-]+", "_", tender_no).strip("._-") or "tender"
+def safe_dir_name(name: str) -> str:
+    """Sanitize a project description or tender number into a safe single-segment folder name.
+
+    Preserves single spaces and standard punctuation while replacing path separators,
+    illegal filesystem characters, and ``..`` sequences with underscores.
+    """
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", name or "")
+    cleaned = re.sub(r"\.{2,}", "_", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ._")
+    return cleaned or "tender"
+
+
+def tender_dir_name(tender: TenderNotice) -> str:
+    """Folder name for a tender's downloaded documents, preferring its project description."""
+    return safe_dir_name(tender.description or tender.tender_no)
 
 
 def _ensure_listing(page: Page) -> None:
@@ -43,11 +55,11 @@ def _ensure_listing(page: Page) -> None:
     if _normalise(page.url) == _normalise(LISTING_URL):
         return
     try:
-        page.go_back(wait_until="domcontentloaded", timeout=config.HKUST_NAV_TIMEOUT_MS)
+        page.go_back(wait_until="domcontentloaded", timeout=config.NAV_TIMEOUT_MS)
         if _normalise(page.url) != _normalise(LISTING_URL):
             raise PlaywrightTimeoutError("go_back did not return to the offer selection page")
         page.wait_for_selector(
-            DIRECTORY_ROW_SELECTOR, state="attached", timeout=config.HKUST_READY_TIMEOUT_MS
+            DIRECTORY_ROW_SELECTOR, state="attached", timeout=config.READY_TIMEOUT_MS
         )
     except (PlaywrightTimeoutError, PlaywrightError):
         browser_utils.navigate(
@@ -85,14 +97,14 @@ def _download_one(page: Page, tender: TenderNotice, dest_root: Path) -> List[Pat
     """Open one invited tender's detail page and save every document it lists."""
     _ensure_listing(page)
     _invited_row(page, tender.tender_no).locator(".tender-offer-dtl-dl-link").first.click(
-        timeout=config.HKUST_DETAIL_TIMEOUT_MS
+        timeout=config.DETAIL_TIMEOUT_MS
     )
-    page.wait_for_load_state("domcontentloaded", timeout=config.HKUST_NAV_TIMEOUT_MS)
+    page.wait_for_load_state("domcontentloaded", timeout=config.NAV_TIMEOUT_MS)
     page.wait_for_selector(
-        DETAIL_READY_SELECTOR, state="attached", timeout=config.HKUST_DETAIL_TIMEOUT_MS
+        DETAIL_READY_SELECTOR, state="attached", timeout=config.DETAIL_TIMEOUT_MS
     )
 
-    dest = dest_root / safe_dir_name(tender.tender_no)
+    dest = dest_root / tender_dir_name(tender)
     dest.mkdir(parents=True, exist_ok=True)
 
     saved: List[Path] = []
@@ -100,7 +112,7 @@ def _download_one(page: Page, tender: TenderNotice, dest_root: Path) -> List[Pat
         # Re-locate per file rather than holding row handles: a download rewrites that
         # row's "Last Download On" cell, which can invalidate a held handle.
         row = page.locator("table tr").filter(has_text=file_name).first
-        with page.expect_download(timeout=config.HKUST_DETAIL_TIMEOUT_MS) as download_info:
+        with page.expect_download(timeout=config.DETAIL_TIMEOUT_MS) as download_info:
             row.locator(".doc-dl-btn").first.click()
         download = download_info.value
         # ``suggested_filename`` comes from the server's Content-Disposition, so take
@@ -118,9 +130,10 @@ def download_tender_documents(
 ) -> List[Path]:
     """Download every document of each invited tender into ``dest_root/<tender_no>/``.
 
+    Defaults ``dest_root`` to ``config.DOCUMENT_DIR / "HKUST"``.
     A failure on one tender is reported and skipped rather than aborting the rest.
     """
-    dest_root = Path(dest_root or config.DOCUMENTS_DIR)
+    dest_root = Path(dest_root or (config.DOCUMENT_DIR / "HKUST"))
     saved: List[Path] = []
     for tender in tenders:
         try:

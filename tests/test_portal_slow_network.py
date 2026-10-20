@@ -204,7 +204,7 @@ class TestSlowNetworkResilience(unittest.TestCase):
 
         page = self._context(router).new_page()
 
-        with patch.object(config, "HKUST_NAV_BACKOFF_SECONDS", 0.2):
+        with patch.object(config, "NAV_BACKOFF_SECONDS", 0.2):
             self.assertTrue(
                 browser_utils.navigate(
                     page,
@@ -223,8 +223,8 @@ class TestSlowNetworkResilience(unittest.TestCase):
             else route.continue_()
         ).new_page()
 
-        with patch.object(config, "HKUST_NAV_BACKOFF_SECONDS", 0.2), patch.object(
-            config, "HKUST_DEBUG_ARTIFACTS", False
+        with patch.object(config, "NAV_BACKOFF_SECONDS", 0.2), patch.object(
+            config, "DEBUG_ARTIFACTS", False
         ):
             with self.assertRaises(NavigationError) as ctx:
                 browser_utils.navigate(
@@ -236,7 +236,7 @@ class TestSlowNetworkResilience(unittest.TestCase):
 
         self.assertEqual(ctx.exception.url, config.HKUST_LOGIN_URL)
         self.assertEqual(ctx.exception.stage, "goto")
-        self.assertEqual(ctx.exception.attempts, config.HKUST_NAV_ATTEMPTS)
+        self.assertEqual(ctx.exception.attempts, config.NAV_ATTEMPTS)
 
 
 if __name__ == "__main__":

@@ -121,7 +121,7 @@ class TestMailReader(unittest.TestCase):
             username="test@gmail.com", app_password="password123"
         ).get_handled_tenders()
 
-        expected = (date.today() - timedelta(days=config.HKUST_MAIL_LOOKBACK_DAYS)).strftime("%d-%b-%Y")
+        expected = (date.today() - timedelta(days=config.MAIL_LOOKBACK_DAYS)).strftime("%d-%b-%Y")
         self.assertIn(f"(SINCE {expected})", state["criteria"])
 
     @patch("imaplib.IMAP4_SSL")

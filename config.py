@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from typing import Tuple
 from dotenv import load_dotenv
 
 # Base directory
@@ -24,10 +25,13 @@ def _project_path(raw: str) -> Path:
 # Load environment variables from .env
 load_dotenv(BASE_DIR / ".env")
 
-# Downloaded tender documents, one subfolder per tender number.
-DOCUMENTS_DIR = _project_path(
-    os.getenv("HKUST_DOCUMENTS_DIR", "") or str(BASE_DIR / "output_documents")
+# Downloaded tender documents root, organized as <DOCUMENT_DIR>/<UNIVERSITY>/<tender_no>/.
+DOCUMENT_DIR = _project_path(
+    os.getenv("DOCUMENT_DIR", "")
+    or os.getenv("HKUST_DOCUMENTS_DIR", "")
+    or str(BASE_DIR / "output_documents")
 )
+DOCUMENTS_DIR = DOCUMENT_DIR
 
 # HKUST Portal Config
 HKUST_WELCOME_URL = os.getenv(
@@ -45,57 +49,97 @@ HKUST_TENDER_OFFR_SEL_URL = os.getenv(
 HKUST_VENDOR_ID = os.getenv("HKUST_VENDOR_ID", "")
 HKUST_PASSWORD = os.getenv("HKUST_PASSWORD", "")
 
+# CUHK (CUPro) Portal Config
+CUHK_LOGIN_URL = os.getenv(
+    "CUHK_LOGIN_URL", "https://cupro-cuhk.com/Supplier/en/Login/index.aspx"
+)
+CUHK_ACCEPT_TERMS_URL = os.getenv(
+    "CUHK_ACCEPT_TERMS_URL", "https://cupro-cuhk.com/Supplier/en/Login/AcceptTerms.aspx"
+)
+CUHK_TENDER_SEARCH_URL = os.getenv(
+    "CUHK_TENDER_SEARCH_URL", "https://cupro-cuhk.com/Supplier/en/Tender/Search.aspx"
+)
+CUHK_RFQ_SEARCH_URL = os.getenv(
+    "CUHK_RFQ_SEARCH_URL", "https://cupro-cuhk.com/Supplier/en/RFQ/Search.aspx"
+)
+CUHK_USER_ID = os.getenv("CUHK_USER_ID", "")
+CUHK_PASSWORD = os.getenv("CUHK_PASSWORD", "")
 
-def _env_int(name: str, default: int) -> int:
-    """Read an int from the environment, falling back to the default on a bad value."""
+
+def _env_raw(name: str, fallback_name: str = "") -> Tuple[str, str]:
+    """Return ``(used_name, raw_value)`` checking ``name`` first, then ``fallback_name``."""
     raw = os.getenv(name, "").strip()
+    if raw or not fallback_name:
+        return name, raw
+    fb_raw = os.getenv(fallback_name, "").strip()
+    if fb_raw:
+        return fallback_name, fb_raw
+    return name, ""
+
+
+def _env_int(name: str, default: int, fallback_name: str = "") -> int:
+    """Read an int from the environment, falling back to the default on a bad value."""
+    used_name, raw = _env_raw(name, fallback_name)
     if not raw:
         return default
     try:
         return int(raw)
     except ValueError:
-        print(f"[!] {name}={raw!r} is not an integer; using default {default}.")
+        print(f"[!] {used_name}={raw!r} is not an integer; using default {default}.")
         return default
 
 
-def _env_float(name: str, default: float) -> float:
+def _env_float(name: str, default: float, fallback_name: str = "") -> float:
     """Read a float from the environment, falling back to the default on a bad value."""
-    raw = os.getenv(name, "").strip()
+    used_name, raw = _env_raw(name, fallback_name)
     if not raw:
         return default
     try:
         return float(raw)
     except ValueError:
-        print(f"[!] {name}={raw!r} is not a number; using default {default}.")
+        print(f"[!] {used_name}={raw!r} is not a number; using default {default}.")
         return default
 
 
-def _env_flag(name: str, default: bool) -> bool:
+def _env_flag(name: str, default: bool, fallback_name: str = "") -> bool:
     """Read a boolean from the environment, falling back to the default on a bad value."""
-    raw = os.getenv(name, "").strip().lower()
+    used_name, raw_orig = _env_raw(name, fallback_name)
+    raw = raw_orig.lower()
     if not raw:
         return default
     if raw in ("1", "true", "yes", "on"):
         return True
     if raw in ("0", "false", "no", "off"):
         return False
-    print(f"[!] {name}={raw!r} is not a boolean; using default {default}.")
+    print(f"[!] {used_name}={raw_orig!r} is not a boolean; using default {default}.")
     return default
 
 
-# Navigation tuning. The HKUST login page loads Google reCAPTCHA from an external
-# host, and that request is slow when the link is busy, so waiting for network idle
-# is unreliable there. These bound every wait explicitly instead of inheriting
-# Playwright's 30s default.
-HKUST_NAV_TIMEOUT_MS = _env_int("HKUST_NAV_TIMEOUT_MS", 15000)
-HKUST_READY_TIMEOUT_MS = _env_int("HKUST_READY_TIMEOUT_MS", 15000)
-HKUST_SCRIPT_TIMEOUT_MS = _env_int("HKUST_SCRIPT_TIMEOUT_MS", 30000)
-HKUST_POST_LOGIN_TIMEOUT_MS = _env_int("HKUST_POST_LOGIN_TIMEOUT_MS", 20000)
-HKUST_DETAIL_TIMEOUT_MS = _env_int("HKUST_DETAIL_TIMEOUT_MS", 20000)
-HKUST_NAV_ATTEMPTS = _env_int("HKUST_NAV_ATTEMPTS", 3)
-HKUST_NAV_BACKOFF_SECONDS = _env_float("HKUST_NAV_BACKOFF_SECONDS", 2.0)
-HKUST_RETRY_ON_NET_ERRORS = _env_flag("HKUST_RETRY_ON_NET_ERRORS", True)
-HKUST_DEBUG_ARTIFACTS = _env_flag("HKUST_DEBUG_ARTIFACTS", True)
+# Navigation tuning. Portal pages load external scripts (such as Google reCAPTCHA on
+# HKUST), so waiting for network idle is unreliable on a busy link. These bound every
+# wait explicitly instead of inheriting Playwright's 30s default.
+NAV_TIMEOUT_MS = _env_int("NAV_TIMEOUT_MS", 15000, "HKUST_NAV_TIMEOUT_MS")
+READY_TIMEOUT_MS = _env_int("READY_TIMEOUT_MS", 15000, "HKUST_READY_TIMEOUT_MS")
+SCRIPT_TIMEOUT_MS = _env_int("SCRIPT_TIMEOUT_MS", 30000, "HKUST_SCRIPT_TIMEOUT_MS")
+POST_LOGIN_TIMEOUT_MS = _env_int(
+    "POST_LOGIN_TIMEOUT_MS", 20000, "HKUST_POST_LOGIN_TIMEOUT_MS"
+)
+DETAIL_TIMEOUT_MS = _env_int("DETAIL_TIMEOUT_MS", 20000, "HKUST_DETAIL_TIMEOUT_MS")
+NAV_ATTEMPTS = _env_int("NAV_ATTEMPTS", 3, "HKUST_NAV_ATTEMPTS")
+NAV_BACKOFF_SECONDS = _env_float("NAV_BACKOFF_SECONDS", 2.0, "HKUST_NAV_BACKOFF_SECONDS")
+RETRY_ON_NET_ERRORS = _env_flag("RETRY_ON_NET_ERRORS", True, "HKUST_RETRY_ON_NET_ERRORS")
+DEBUG_ARTIFACTS = _env_flag("DEBUG_ARTIFACTS", True, "HKUST_DEBUG_ARTIFACTS")
+
+# Backwards-compatible aliases
+HKUST_NAV_TIMEOUT_MS = NAV_TIMEOUT_MS
+HKUST_READY_TIMEOUT_MS = READY_TIMEOUT_MS
+HKUST_SCRIPT_TIMEOUT_MS = SCRIPT_TIMEOUT_MS
+HKUST_POST_LOGIN_TIMEOUT_MS = POST_LOGIN_TIMEOUT_MS
+HKUST_DETAIL_TIMEOUT_MS = DETAIL_TIMEOUT_MS
+HKUST_NAV_ATTEMPTS = NAV_ATTEMPTS
+HKUST_NAV_BACKOFF_SECONDS = NAV_BACKOFF_SECONDS
+HKUST_RETRY_ON_NET_ERRORS = RETRY_ON_NET_ERRORS
+HKUST_DEBUG_ARTIFACTS = DEBUG_ARTIFACTS
 
 
 # Company Information (Configured solely via .env)
@@ -126,11 +170,13 @@ BR_CERTIFICATE_PATH = _project_path(
 GMAIL_USER = os.getenv("GMAIL_USER", "") or os.getenv("CONTACT_EMAIL", "")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "").replace(" ", "")
 GMAIL_DRAFTS_URL = os.getenv("GMAIL_DRAFTS_URL", "https://mail.google.com/mail/#drafts")
-HKUST_MAIL_TAG = os.getenv("HKUST_MAIL_TAG", "HKUST Tenders")
+MAIL_TAG = os.getenv("MAIL_TAG", "") or os.getenv("HKUST_MAIL_TAG", "HKUST Tenders")
+HKUST_MAIL_TAG = MAIL_TAG
 
 # How far back to look when deciding whether a tender has already been dealt with. The
 # check reads subject lines in Inbox, Drafts and Sent, so this also bounds its cost.
-HKUST_MAIL_LOOKBACK_DAYS = _env_int("HKUST_MAIL_LOOKBACK_DAYS", 60)
+MAIL_LOOKBACK_DAYS = _env_int("MAIL_LOOKBACK_DAYS", 60, "HKUST_MAIL_LOOKBACK_DAYS")
+HKUST_MAIL_LOOKBACK_DAYS = MAIL_LOOKBACK_DAYS
 
 # Email Template
 EMAIL_SUBJECT_TEMPLATE = "Request for Tender Documents – {tender_no} - {description}"
