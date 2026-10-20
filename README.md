@@ -178,11 +178,11 @@ uv run python app.py --visible
 ## Tender Tracking & Gmail Labels
 
 1. **Already-handled check (runs before every scrape)**: the tool reads the **subject lines** of your
-   Inbox, Drafts and Sent folders for the last `HKUST_MAIL_LOOKBACK_DAYS` days (default 60). A tender
+   Inbox, Drafts and Sent folders for the last `MAIL_LOOKBACK_DAYS` days (default 60). A tender
    found there is hidden from the tender list, and the run reports the total number of handled tender
    references found. This is what makes a reply you sent count as handled — labels are never consulted, so
    nothing has to be tagged for it to work.
-2. **Immediate Draft Tagging**: When drafts are created in Gmail, the `HKUST Tenders` label (configured by `HKUST_MAIL_TAG` in `.env`) is automatically attached to the newly saved drafts.
+2. **Immediate Draft Tagging**: When drafts are created in Gmail, the `HKUST Tenders` label (configured by `MAIL_TAG` in `.env`) is automatically attached to the newly saved drafts.
 
 The `HKUST Tenders` label is applied only to drafts the tool creates. Nothing in the tool reads it
 back, so it exists purely for your own organisation in Gmail.
