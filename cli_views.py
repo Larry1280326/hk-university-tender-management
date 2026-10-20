@@ -17,10 +17,8 @@ def display_welcome_banner():
     phone_display = config.CONTACT_PHONE or "[dim]Not configured[/dim]"
 
     banner_text = (
-        "[bold cyan]HKUST e-Tendering Portal Automation & Gmail Drafter[/bold cyan]\n"
         f"[green]Company:[/green] {company_display} | [green]Contact:[/green] {contact_display}\n"
-        f"[green]Email:[/green] {email_display} | [green]Phone:[/green] {phone_display}\n"
-        f"[dim]Portal URL: {config.HKUST_WELCOME_URL}[/dim]"
+        f"[green]Email:[/green] {email_display} | [green]Phone:[/green] {phone_display}"
     )
     console.print(Panel(banner_text, expand=False, border_style="cyan"))
 
