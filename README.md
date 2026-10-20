@@ -1,6 +1,6 @@
-# HKUST & CUHK e-Tendering Automation & Gmail Drafter
+# HKUST, CUHK & CityU e-Tendering Automation & Gmail Drafter
 
-Automated workflow supporting both **HKUST** (`w5.ab.ust.hk/jstd`) and **CUHK (CUPro)** (`cupro-cuhk.com`):
+Automated workflow supporting **HKUST** (`w5.ab.ust.hk/jstd`), **CUHK (CUPro)** (`cupro-cuhk.com`), and **CityU (ETS)** (`etender.cityu.edu.hk`):
 1. **HKUST Workflow**:
    - Before scraping, scan Gmail (`Inbox`, `Drafts`, and `Sent`) for tenders you have already dealt with over the last `MAIL_LOOKBACK_DAYS` days (default 60), so they are hidden from the scrape.
    - Log in to the HKUST e-Tendering Portal (`https://w5.ab.ust.hk/jstd/td_login`), accepting Terms & Conditions if redirected to `td_welcome`, and wait for Google reCAPTCHA readiness.
@@ -11,6 +11,13 @@ Automated workflow supporting both **HKUST** (`w5.ab.ust.hk/jstd`) and **CUHK (C
    - Scrape active (`Status == "Issued"`) **Request for Quotation (RFQ)** (`Q-YYYYNNNN`) and **Tender Invitation** (`T-YYYYNNNN`) notices.
    - Group active notices in the interactive checklist into **Expression of Interest Submitted / Invited** (documents already unlocked) and **Open Tender Notice (Submit EOI & Download)**.
    - For selected open tenders, automatically submit **Expression of Interest (Yes)** on CUPro to unlock the tender documents, and download all released documents, addenda, registration forms, and query responses directly into `<DOCUMENT_DIR>/CUHK/<project_name>/`.
+3. **CityU (ETS) Workflow**:
+   - Log in to the CityU e-Tendering System (`https://etender.cityu.edu.hk/Supplier/en/Login/index.aspx`), accepting the supplier declarations.
+   - Scrape active (`Status == "Issued"`) **Request for Quotation (RFQ)** (`Q-YYYYNNNN`) and **Tender Invitation** (`T-YYYYNNNN`) notices.
+   - Group active notices into **Expression of Interest Submitted / Invited** and **Open Tender Notice (Submit EOI & Download)**.
+   - For selected open tenders, submit **Expression of Interest (Yes)** to unlock the documents, then download all released files into `<DOCUMENT_DIR>/CityU/<project_name>/`.
+
+CityU runs the same ETS platform as CUHK, so the Tender/RFQ search and detail-page handling share the same behaviour; only the login entry point and host differ.
 
 ---
 
@@ -45,6 +52,10 @@ HKUST_PASSWORD=your_password_here
 CUHK_USER_ID=your_cuhk_user_id_here
 CUHK_PASSWORD=your_cuhk_password_here
 
+# CityU e-Tendering System Supplier Credentials
+CITYU_USER_ID=your_cityu_user_id_here
+CITYU_PASSWORD=your_cityu_password_here
+
 # Path to your Business Registration (BR) Certificate file (PDF or image)
 BR_CERTIFICATE_PATH=assets/br_certificate.pdf
 
@@ -77,6 +88,11 @@ DOCUMENT_DIR=output_documents
 # CUHK_ACCEPT_TERMS_URL=https://cupro-cuhk.com/Supplier/en/Login/AcceptTerms.aspx
 # CUHK_TENDER_SEARCH_URL=https://cupro-cuhk.com/Supplier/en/Tender/Search.aspx
 # CUHK_RFQ_SEARCH_URL=https://cupro-cuhk.com/Supplier/en/RFQ/Search.aspx
+# CITYU_BASE_URL=https://etender.cityu.edu.hk
+# CITYU_LOGIN_URL=https://etender.cityu.edu.hk/Supplier/en/Login/index.aspx
+# CITYU_ACCEPT_TERMS_URL=https://etender.cityu.edu.hk/Supplier/en/Login/AcceptTerms.aspx
+# CITYU_TENDER_SEARCH_URL=https://etender.cityu.edu.hk/Supplier/en/Tender/Search.aspx
+# CITYU_RFQ_SEARCH_URL=https://etender.cityu.edu.hk/Supplier/en/RFQ/Search.aspx
 # NAV_TIMEOUT_MS=15000          # loading the page document itself
 # READY_TIMEOUT_MS=15000        # waiting for a specific element to appear
 # SCRIPT_TIMEOUT_MS=30000       # waiting for external scripts (e.g. reCAPTCHA) to load
@@ -134,10 +150,14 @@ uv run python app.py
   1. Logs into CUHK CUPro (`cupro-cuhk.com`) and scrapes active (`Issued`) RFQs and Tender Invitations.
   2. Opens the interactive checklist grouped by **Expression of Interest Submitted / Invited** vs. **Open Tender Notice (Submit EOI & Download)**.
   3. Submits **Expression of Interest (Yes)** on CUPro for any selected open tenders (unlocking their files) and downloads all documents into `<DOCUMENT_DIR>/CUHK/<project_name>/`.
-- **3. Test Google Account Connection**: Verifies Google App Password and IMAP connection (and reports the resolved localized Drafts folder).
-- **4. Exit**
+- **3. CityU**:
+  1. Logs into CityU ETS (`etender.cityu.edu.hk`) and scrapes active (`Issued`) RFQs and Tender Invitations.
+  2. Opens the same grouped checklist.
+  3. Submits **Expression of Interest (Yes)** for selected open tenders and downloads all documents into `<DOCUMENT_DIR>/CityU/<project_name>/`.
+- **4. Test Google Account Connection**: Verifies Google App Password and IMAP connection (and reports the resolved localized Drafts folder).
+- **5. Exit**
 
-The menu stays up until you choose **4. Exit**, so cancelling a scrape — or finishing one —
+The menu stays up until you choose **5. Exit**, so cancelling a scrape — or finishing one —
 returns you here rather than closing the program. Ctrl-C at the prompt also exits.
 
 #### Direct Command Line Flags:
