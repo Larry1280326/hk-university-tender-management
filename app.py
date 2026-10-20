@@ -417,9 +417,9 @@ def interactive_menu() -> bool:
     lands back here instead of taking the whole program down with it: only Exit ends it.
     """
     choice = questionary.select(
-        "HKUST Workflow - Select an option:",
+        "Select an option:",
         choices=[
-            "1. Scrape HKUST Tenders & Draft Emails",
+            "1. HKUST — Scrape Tenders & Draft Emails",
             "2. Test Google Account Connection",
             "3. Exit",
         ],

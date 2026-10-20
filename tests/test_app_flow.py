@@ -307,7 +307,7 @@ class TestMainMenuLoop(unittest.TestCase):
         with patch.object(app, "questionary") as q, patch.object(
             app, "run_tender_workflow"
         ) as workflow:
-            q.select.return_value.ask.return_value = "1. Scrape HKUST Tenders & Draft Emails"
+            q.select.return_value.ask.return_value = "1. HKUST — Scrape Tenders & Draft Emails"
 
             self.assertTrue(app.interactive_menu())
 
@@ -325,8 +325,8 @@ class TestMainMenuLoop(unittest.TestCase):
     def test_main_reshows_the_menu_until_exit(self):
         """Cancelling a scrape must land back on the menu, not drop the user to the shell."""
         answers = iter([
-            "1. Scrape HKUST Tenders & Draft Emails",
-            "1. Scrape HKUST Tenders & Draft Emails",
+            "1. HKUST — Scrape Tenders & Draft Emails",
+            "1. HKUST — Scrape Tenders & Draft Emails",
             "3. Exit",
         ])
         with patch("sys.argv", ["app.py"]), patch.object(
