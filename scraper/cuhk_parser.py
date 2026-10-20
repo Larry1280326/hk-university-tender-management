@@ -16,7 +16,7 @@ On a tender's detail page (``View.aspx``):
 
 import re
 from datetime import date
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
@@ -26,7 +26,6 @@ from scraper import browser_utils
 from scraper.tender_parser import TenderDocument, TenderNotice
 
 DO_VIEW_REGEX = re.compile(r"doView\(['\"](\d+)['\"]\)")
-FILE_ID_REGEX = re.compile(r"file_id=(\d+)")
 
 
 def _clean_text(raw: str) -> str:
@@ -101,8 +100,9 @@ class CUHKTenderParser:
     ) -> List[Dict[str, str]]:
         """Paginate List.aspx and collect all rows whose Status is 'Issued'.
 
-        Results are ordered by Issue Date descending, so pagination stops as soon as a
-        page contains zero 'Issued' rows or has no next-page link.
+        Results are ordered by Issue Date, not by Status, so a page with no 'Issued'
+        rows may still be followed by pages that contain them. Pagination therefore
+        continues until there is no next-page link.
         """
         if not self._submit_search(search_url, category):
             return []
@@ -113,7 +113,6 @@ class CUHKTenderParser:
         page_num = 1
 
         while True:
-            page_issued_count = 0
             rows = self.page.locator("table tr.trtext2, table tr.trtext3").all()
 
             for row in rows:
@@ -142,7 +141,6 @@ class CUHKTenderParser:
                 closing_date = _clean_text(cells[5].inner_text())
 
                 if status.lower() == "issued":
-                    page_issued_count += 1
                     issued_items.append(
                         {
                             "portal_id": portal_id,
@@ -153,9 +151,6 @@ class CUHKTenderParser:
                             "view_url": view_url,
                         }
                     )
-
-            if page_issued_count == 0:
-                break
 
             next_page = page_num + 1
             next_link = self.page.locator(f"a[href='List.aspx?Page={next_page}']")

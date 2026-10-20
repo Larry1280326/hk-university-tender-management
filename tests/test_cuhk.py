@@ -101,6 +101,28 @@ TENDER_LIST_PAGE2_ALL_CLOSED_HTML = """<!DOCTYPE html>
 </body></html>
 """
 
+TENDER_LIST_PAGE3_HTML = """<!DOCTYPE html>
+<html><body>
+<div class="headtext1">Tender Invitation - Search Result (Record 6 - 7 of 20)</div>
+<table>
+  <tr class="trtext1"><th></th><th>Ref</th><th>Subject</th><th>Status</th><th>Issue Date</th><th>Closing Date</th></tr>
+  <tr class="trtext2">
+    <td><span>6.</span></td>
+    <td><span><a href="javascript:void()" onclick="doView('13700'); return false">T-20260430</a></span></td>
+    <td><span title="Provision of Lab Equipment">Provision of Lab Equipment</span></td>
+    <td><span>Issued&nbsp;</span></td>
+    <td><span>2026/10/01 (Thu)</span></td>
+    <td><span>2026/12/01 (Tue) 14:30</span></td>
+  </tr>
+</table>
+<div>Page: <a href="List.aspx?Page=1">1</a> <a href="List.aspx?Page=2">2</a> <b>3</b></div>
+<form method="post" action="View.aspx" name="ViewForm" style="display:none">
+  <input type="hidden" name="Page" value="3" />
+  <input type="hidden" name="tender_id" value="" />
+</form>
+</body></html>
+"""
+
 VIEW_13299_UNLOCKED_HTML = """<!DOCTYPE html>
 <html><body>
 <div id="MainContent">
@@ -325,6 +347,12 @@ class TestCUHKParserAndEOIDownload(unittest.TestCase):
                     content_type="text/html",
                     body=TENDER_LIST_PAGE2_ALL_CLOSED_HTML,
                 )
+            elif "Tender/List.aspx?Page=3" in url:
+                route.fulfill(
+                    status=200,
+                    content_type="text/html",
+                    body=TENDER_LIST_PAGE3_HTML,
+                )
             elif "Tender/View.aspx" in url:
                 post_data = parse_qs(request.post_data or "")
                 tid = post_data.get("tender_id", [""])[0]
@@ -377,14 +405,19 @@ class TestCUHKParserAndEOIDownload(unittest.TestCase):
     def tearDown(self):
         self.context.close()
 
-    def test_extract_tenders_filters_issued_and_stops_pagination_early(self):
+    def test_extract_tenders_collects_issued_rows_after_closed_page(self):
         parser = CUHKTenderParser(self.page)
         tenders = parser.extract_tenders()
 
         # Page 1 had 2 Issued rows (T-20260393 and T-20260422) and 1 Closed row.
-        # Page 2 had 0 Issued rows, so Page 3 must never be requested.
-        self.assertEqual([t.tender_no for t in tenders], ["T-20260393", "T-20260422"])
-        self.assertFalse(any("Page=3" in u for u in self.visited_urls))
+        # Page 2 had 0 Issued rows but Page 3 still had an Issued row, so pagination
+        # must continue past the all-Closed page and stop only when no next link exists.
+        self.assertEqual(
+            [t.tender_no for t in tenders],
+            ["T-20260393", "T-20260422", "T-20260430"],
+        )
+        self.assertTrue(any("Page=3" in u for u in self.visited_urls))
+        self.assertFalse(any("Page=4" in u for u in self.visited_urls))
 
         # 1. T-20260393: EOI already submitted -> invited=True, needs_eoi=False, 4 documents
         t_unlocked = tenders[0]
