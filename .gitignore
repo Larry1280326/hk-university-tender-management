@@ -21,3 +21,10 @@ output_documents/
 # Certificates & Assets
 assets/*.pdf
 assets/debug/
+
+# Web runtime state & hosted deployment secrets
+.runtime/
+web/jobs/
+.secrets/
+.streamlit/secrets.toml
+secrets.toml

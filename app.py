@@ -4,6 +4,8 @@ import argparse
 import sys
 import webbrowser
 from contextlib import contextmanager
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List, Optional, Set, Tuple
 
 # Ensure standard UTF-8 console output for Windows cmd/PowerShell
@@ -11,20 +13,15 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-from playwright.sync_api import sync_playwright
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 import questionary
 
 import config
-from scraper.HKUST.auth import HKUSTAuthManager
+from scraper import sessions as portal_sessions
 from scraper.HKUST.documents import download_tender_documents
 from scraper.HKUST.parser import TenderParser
-from scraper.CUHK.auth import CUHKAuthManager
 from scraper.CUHK.documents import process_cuhk_tenders
-from scraper.CUHK.parser import CUHKTenderParser
-from scraper.CityU.auth import CityUAuthManager
 from scraper.CityU.documents import process_cityu_tenders
-from scraper.CityU.parser import CityUTenderParser
 from scraper.models import TenderNotice
 from mailer.template import generate_tender_email, TenderEmailDraft
 from mailer.email_parser import handled_tender_key
@@ -39,79 +36,23 @@ from cli_views import (
 
 @contextmanager
 def portal_session(headless: bool = True):
-    """Yield a logged-in ``(page, parser)`` and close the browser on exit.
-
-    Must never wrap an interactive prompt: ``sync_playwright()`` keeps a running asyncio
-    event loop on the main thread for as long as this context is open, and prompt_toolkit
-    (which questionary uses) calls ``asyncio.run()``, which refuses to start inside a
-    running loop. Every portal_session is therefore entered, used, and exited around a
-    single scrape or download.
-    """
-    auth_mgr = HKUSTAuthManager(headless=headless)
-
-    with sync_playwright() as p:
-        console.print("[*] Launching Chromium browser...", style="cyan")
-        browser = p.chromium.launch(headless=headless)
-        context = auth_mgr.get_context(browser)
-        page = context.new_page()
-
-        try:
-            if config.HKUST_VENDOR_ID and config.HKUST_PASSWORD:
-                console.print(f"[*] Logging in as Vendor ID: {config.HKUST_VENDOR_ID}...", style="cyan")
-                auth_mgr.perform_login(page)
-            else:
-                console.print("[yellow]No login credentials in .env, accessing public page...[/yellow]")
-
-            yield page, TenderParser(page)
-        finally:
-            context.close()
-            browser.close()
+    """Yield a logged-in HKUST ``(page, parser)`` and close the browser on exit."""
+    with portal_sessions.portal_session(headless=headless, log=console.print) as pair:
+        yield pair
 
 
 @contextmanager
 def cuhk_portal_session(headless: bool = True):
     """Yield a logged-in CUHK ``(page, parser)`` and close the browser on exit."""
-    auth_mgr = CUHKAuthManager(headless=headless)
-
-    with sync_playwright() as p:
-        console.print("[*] Launching Chromium browser...", style="cyan")
-        browser = p.chromium.launch(headless=headless)
-        context = auth_mgr.get_context(browser)
-        page = context.new_page()
-
-        try:
-            console.print(
-                f"[*] Logging into CUHK CUPro as User ID: {config.CUHK_USER_ID}...",
-                style="cyan",
-            )
-            auth_mgr.perform_login(page)
-            yield page, CUHKTenderParser(page)
-        finally:
-            context.close()
-            browser.close()
+    with portal_sessions.cuhk_portal_session(headless=headless, log=console.print) as pair:
+        yield pair
 
 
 @contextmanager
 def cityu_portal_session(headless: bool = True):
     """Yield a logged-in CityU ``(page, parser)`` and close the browser on exit."""
-    auth_mgr = CityUAuthManager(headless=headless)
-
-    with sync_playwright() as p:
-        console.print("[*] Launching Chromium browser...", style="cyan")
-        browser = p.chromium.launch(headless=headless)
-        context = auth_mgr.get_context(browser)
-        page = context.new_page()
-
-        try:
-            console.print(
-                f"[*] Logging into CityU e-Tendering as User ID: {config.CITYU_USER_ID}...",
-                style="cyan",
-            )
-            auth_mgr.perform_login(page)
-            yield page, CityUTenderParser(page)
-        finally:
-            context.close()
-            browser.close()
+    with portal_sessions.cityu_portal_session(headless=headless, log=console.print) as pair:
+        yield pair
 
 
 def scrape_tenders(
@@ -368,84 +309,114 @@ def handle_tender_selection_and_drafting(
         break
 
 
-def draft_emails_for_tenders(drafts: List[TenderEmailDraft]) -> None:
+@dataclass
+class DraftOutcome:
+    """What a drafting run produced, so a caller can report it without parsing stdout."""
+
+    created_count: int = 0
+    eml_paths: List[Path] = field(default_factory=list)
+    compose_urls: List[str] = field(default_factory=list)
+    errors: List[str] = field(default_factory=list)
+    skipped_no_recipient: List[str] = field(default_factory=list)
+
+
+def draft_emails_for_tenders(
+    drafts: List[TenderEmailDraft],
+    *,
+    open_browser: bool = True,
+    log=console.print,
+    export_dir: Optional[Path] = None,
+) -> DraftOutcome:
     """Execute draft creation via Google App Password (IMAP) or offline EML fallback."""
-    created_count = 0
+    outcome = DraftOutcome()
 
     # 1. Primary: Google Account App Password (IMAP)
     if config.GMAIL_APP_PASSWORD:
-        console.print("[*] Connecting to Gmail via App Password (IMAP)...", style="cyan")
+        log("[*] Connecting to Gmail via App Password (IMAP)...")
         account_mailer = GoogleAccountMailer()
         for d in drafts:
             if not d.recipient_email:
-                console.print(f"[yellow]Skipping {d.tender_no}: No recipient email.[/yellow]")
+                outcome.skipped_no_recipient.append(d.tender_no)
+                log(f"Skipping {d.tender_no}: No recipient email.")
                 continue
             try:
                 success, applied_tags = account_mailer.save_draft(d, apply_tags=True)
                 if success:
-                    created_count += 1
+                    outcome.created_count += 1
                     desc_str = f" - {d.description}" if d.description else ""
-                    console.print(
-                        f"  [green][OK][/green] Saved to Gmail 'Drafts' for [bold]{d.tender_no}[/bold]{desc_str} (To: {d.recipient_email})"
+                    log(
+                        f"  [OK] Saved to Gmail 'Drafts' for {d.tender_no}{desc_str} "
+                        f"(To: {d.recipient_email})"
                     )
             except Exception as e:
-                console.print(f"[!] Note on drafting {d.tender_no} via App Password: {e}", style="yellow")
+                message = f"Note on drafting {d.tender_no} via App Password: {e}"
+                outcome.errors.append(message)
+                log(f"[!] {message}")
 
     # 2. If saved via App Password, open browser
-    if created_count > 0:
-        console.print(f"\n[bold green]Success! {created_count} draft(s) saved directly to your Gmail 'Drafts' folder.[/bold green]")
+    if outcome.created_count > 0:
+        log(
+            f"Success! {outcome.created_count} draft(s) saved directly to your Gmail "
+            "'Drafts' folder."
+        )
         drafts_url = config.GMAIL_DRAFTS_URL
-        console.print(f"[*] Opening Gmail Drafts: [bold underline cyan]{drafts_url}[/bold underline cyan]")
-        try:
-            webbrowser.open(drafts_url)
-        except Exception as e:
-            console.print(f"[!] Could not launch browser: {e}", style="yellow")
+        log(f"[*] Gmail Drafts: {drafts_url}")
+        if open_browser:
+            try:
+                webbrowser.open(drafts_url)
+            except Exception as e:
+                log(f"[!] Could not launch browser: {e}")
     else:
         # Fallback: Offline .EML files + 1-Click Direct Gmail Compose Web Links
-        console.print("[*] Generating fallback offline .EML files and direct Gmail web links...", style="cyan")
-        output_dir = config.BASE_DIR / "output_drafts"
+        log("[*] Generating fallback offline .EML files and direct Gmail web links...")
+        output_dir = Path(export_dir or (config.BASE_DIR / "output_drafts"))
         output_dir.mkdir(parents=True, exist_ok=True)
-        console.print(f"[*] Exporting .eml files to: [bold]{output_dir}[/bold]")
+        log(f"[*] Exporting .eml files to: {output_dir}")
 
         for d in drafts:
             if not d.recipient_email:
+                outcome.skipped_no_recipient.append(d.tender_no)
                 continue
             eml_path = export_eml_file(d, output_dir)
             web_link = generate_gmail_compose_url(d)
-            console.print(f"\n[bold cyan]Tender {d.tender_no}:[/bold cyan]")
-            console.print(f"  * EML file: {eml_path.name}")
-            console.print(f"  * Direct Gmail Compose URL:\n    {web_link}")
+            outcome.eml_paths.append(eml_path)
+            outcome.compose_urls.append(web_link)
+            log(f"Tender {d.tender_no}:")
+            log(f"  * EML file: {eml_path.name}")
+            log(f"  * Direct Gmail Compose URL: {web_link}")
 
-        console.print("\n[green]Done! EML files exported to output_drafts directory.[/green]")
+        log("Done! EML files exported to the output_drafts directory.")
+
+    return outcome
 
 
-def get_processed_tender_numbers() -> Set[Tuple[str, str]]:
+def get_processed_tender_numbers(*, log=console.print, mailer=None) -> Set[Tuple[str, str]]:
     """Scan Inbox, Drafts and Sent for tenders already dealt with.
 
     Returns ``(slug, normalized_ref)`` keys, which the scraper uses to hide those rows.
     The slug keeps a reference handled at one university from hiding another university's
     identically numbered tender.
     """
-    mailer = GoogleAccountMailer()
+    mailer = mailer or GoogleAccountMailer()
     if not mailer.is_configured():
         return set()
 
     days = config.MAIL_LOOKBACK_DAYS
-    console.print(f"[*] Checking Inbox, Drafts and Sent (last {days} days)...", style="cyan")
-    with console.status("[cyan]Scanning mailboxes for already-handled tenders...", spinner="dots"):
-        handled = mailer.get_handled_tenders()
+    log(f"[*] Checking Inbox, Drafts and Sent (last {days} days)...")
+    log("Scanning mailboxes for already-handled tenders...")
+    handled = mailer.get_handled_tenders()
 
     if not handled:
-        console.print(
-            f"[dim]No tender references found in Inbox, Drafts or Sent in the last "
-            f"{days} days.[/dim]"
+        log(
+            f"No tender references found in Inbox, Drafts or Sent in the last "
+            f"{days} days."
         )
         return set()
 
     # Most refs here are old tenders no longer on the portal, so this reports the count
     # found in mail rather than claiming each one was hidden; only the still-listed ones are.
-    console.print(
-        f"[+] [bold green]{len(handled)}[/bold green] tender reference(s) found in your mailboxes"
+    log(
+        f"{len(handled)} tender reference(s) found in your mailboxes"
         f" - any still on the portal are hidden from the list."
     )
 

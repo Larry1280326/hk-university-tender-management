@@ -114,6 +114,10 @@ def download_tender_documents(
     page: Page,
     tenders: List[TenderNotice],
     dest_root: Optional[Path] = None,
+    *,
+    log=print,
+    progress_callback=None,
+    error_callback=None,
 ) -> List[Path]:
     """Download every document of each invited tender into ``dest_root/<tender_no>/``.
 
@@ -122,12 +126,18 @@ def download_tender_documents(
     """
     dest_root = Path(dest_root or (config.DOCUMENT_DIR / "HKUST"))
     saved: List[Path] = []
-    for tender in tenders:
+    total = len(tenders)
+    for index, tender in enumerate(tenders, start=1):
+        if progress_callback:
+            progress_callback(index, total, tender.tender_no)
         try:
             saved.extend(_download_one(page, tender, dest_root))
         except (PlaywrightTimeoutError, PlaywrightError, LookupError) as e:
-            print(
+            message = (
                 f"[!] Could not download documents for {tender.tender_no}: "
                 f"{type(e).__name__}: {e}"
             )
+            log(message)
+            if error_callback:
+                error_callback(tender.tender_no, e)
     return saved

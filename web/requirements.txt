@@ -1,0 +1,11 @@
+# Streamlit Community Cloud installs from the entrypoint's directory first.
+# Playwright is pinned to the newest release known to work on Debian 11, which is what
+# Community Cloud runs. If the Phase 0 smoke test shows Debian 12/13, this can be raised
+# to 1.63.0.
+playwright==1.49.0
+pydantic>=2.13.5
+python-dotenv>=1.2.3
+questionary>=2.1.1
+rich>=15.0.0
+streamlit>=1.37,<2
+streamlit-authenticator>=0.3.2,<0.5

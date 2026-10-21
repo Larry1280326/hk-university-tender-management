@@ -7,8 +7,6 @@ from dotenv import load_dotenv
 
 # Base directory
 BASE_DIR = Path(__file__).resolve().parent
-ASSETS_DIR = BASE_DIR / "assets"
-ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _project_path(raw: str) -> Path:
@@ -24,6 +22,16 @@ def _project_path(raw: str) -> Path:
 
 # Load environment variables from .env
 load_dotenv(BASE_DIR / ".env")
+
+# Writable directories. A hosted deployment (Streamlit Cloud) points both at a runtime
+# directory rather than the read-only-ish repository checkout.
+ASSETS_DIR = _project_path(os.getenv("ASSETS_DIR", "") or str(BASE_DIR / "assets"))
+RUNTIME_DIR = _project_path(os.getenv("RUNTIME_DIR", "") or str(BASE_DIR / ".runtime"))
+for _dir in (ASSETS_DIR, RUNTIME_DIR):
+    try:
+        _dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass  # a read-only checkout must not break import; the caller reports the failure
 
 # Downloaded tender documents root, organized as <DOCUMENT_DIR>/<UNIVERSITY>/<tender_no>/.
 DOCUMENT_DIR = _project_path(
@@ -147,6 +155,10 @@ NAV_ATTEMPTS = _env_int("NAV_ATTEMPTS", 3, "HKUST_NAV_ATTEMPTS")
 NAV_BACKOFF_SECONDS = _env_float("NAV_BACKOFF_SECONDS", 2.0, "HKUST_NAV_BACKOFF_SECONDS")
 RETRY_ON_NET_ERRORS = _env_flag("RETRY_ON_NET_ERRORS", True, "HKUST_RETRY_ON_NET_ERRORS")
 DEBUG_ARTIFACTS = _env_flag("DEBUG_ARTIFACTS", True, "HKUST_DEBUG_ARTIFACTS")
+
+# Extra Chromium flags for the host environment, e.g. "--no-sandbox --disable-dev-shm-usage"
+# inside a container. Empty by default, so the CLI launches exactly as it always has.
+PLAYWRIGHT_LAUNCH_ARGS = os.getenv("PLAYWRIGHT_LAUNCH_ARGS", "").strip()
 
 # Backwards-compatible aliases
 HKUST_NAV_TIMEOUT_MS = NAV_TIMEOUT_MS

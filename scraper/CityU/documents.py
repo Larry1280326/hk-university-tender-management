@@ -63,7 +63,13 @@ def _open_view_page(page: Page, view_url: str, portal_id: str) -> None:
     )
 
 
-def _submit_eoi_if_needed(page: Page, tender: TenderNotice, view_url: str) -> None:
+def _submit_eoi_if_needed(
+    page: Page,
+    tender: TenderNotice,
+    view_url: str,
+    *,
+    log=print,
+) -> None:
     """Submit 'Expression of Interest: Yes' if the tender still has an EOI form."""
     has_eoi = (
         page.locator(
@@ -75,7 +81,7 @@ def _submit_eoi_if_needed(page: Page, tender: TenderNotice, view_url: str) -> No
     if not has_eoi:
         return
 
-    print(f"[*] Submitting Expression of Interest (Yes) for {tender.tender_no}...")
+    log(f"[*] Submitting Expression of Interest (Yes) for {tender.tender_no}...")
     with page.expect_navigation(
         wait_until="domcontentloaded", timeout=config.NAV_TIMEOUT_MS
     ):
@@ -135,7 +141,13 @@ def _unique_filename(raw_name: str, href: str, used_names: Set[str]) -> str:
     return candidate
 
 
-def _download_one_cityu(page: Page, tender: TenderNotice, dest_root: Path) -> List[Path]:
+def _download_one_cityu(
+    page: Page,
+    tender: TenderNotice,
+    dest_root: Path,
+    *,
+    log=print,
+) -> List[Path]:
     """Open one CityU tender, submit EOI if needed, and download all unlocked files."""
     if not tender.portal_id:
         raise LookupError(f"{tender.tender_no} is missing its ETS portal_id")
@@ -144,7 +156,7 @@ def _download_one_cityu(page: Page, tender: TenderNotice, dest_root: Path) -> Li
     _open_view_page(page, view_url, tender.portal_id)
 
     if tender.needs_eoi:
-        _submit_eoi_if_needed(page, tender, view_url)
+        _submit_eoi_if_needed(page, tender, view_url, log=log)
 
     hrefs: List[str] = []
     seen_hrefs: Set[str] = set()
@@ -178,6 +190,10 @@ def process_cityu_tenders(
     page: Page,
     tenders: List[TenderNotice],
     dest_root: Optional[Path] = None,
+    *,
+    log=print,
+    progress_callback=None,
+    error_callback=None,
 ) -> List[Path]:
     """Submit EOI (where needed) and download all documents for selected CityU tenders.
 
@@ -186,12 +202,18 @@ def process_cityu_tenders(
     """
     dest_root = Path(dest_root or (config.DOCUMENT_DIR / "CityU"))
     saved: List[Path] = []
-    for tender in tenders:
+    total = len(tenders)
+    for index, tender in enumerate(tenders, start=1):
+        if progress_callback:
+            progress_callback(index, total, tender.tender_no)
         try:
-            saved.extend(_download_one_cityu(page, tender, dest_root))
+            saved.extend(_download_one_cityu(page, tender, dest_root, log=log))
         except (PlaywrightTimeoutError, PlaywrightError, LookupError) as e:
-            print(
+            message = (
                 f"[!] Could not process CityU tender {tender.tender_no}: "
                 f"{type(e).__name__}: {e}"
             )
+            log(message)
+            if error_callback:
+                error_callback(tender.tender_no, e)
     return saved

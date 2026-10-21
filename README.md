@@ -227,12 +227,62 @@ To run the automated verification suite:
 uv run python -m unittest discover -s tests -v
 ```
 
-Of the 120 tests in the suite:
-- **113 unit tests run offline by default**, verifying mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, the interactive menu loop, tender selection, document download helpers, attachment validation, regex extraction, and `.env` dynamic loading without requiring network access.
+Of the 138 tests in the suite:
+- **131 unit tests run offline by default**, verifying mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, the interactive menu loop, tender selection, document download helpers, attachment validation, regex extraction, and `.env` dynamic loading without requiring network access.
 - **7 live-portal / slow-network integration tests are skipped by default** (`tests/test_portal_reachability.py` and `tests/test_portal_slow_network.py`). Enable them explicitly when testing against the live HKUST portal:
   ```bash
   RUN_LIVE_PORTAL_TEST=1 RUN_SLOW_NETWORK_TEST=1 uv run python -m unittest discover -s tests -v
   ```
+
+---
+
+## Deploying as a Web App (Streamlit Community Cloud)
+
+The `web/` package wraps the same scrapers and mailer in a Streamlit UI and runs on the
+free Community Cloud tier (2 vCPU / 2.7 GB RAM / 50 GB, one private app). Browser work
+runs in a one-shot subprocess (`web/worker.py`), so a long scrape never blocks the UI and
+can be cancelled cleanly.
+
+### Local run
+
+```bash
+uv sync --extra web
+cp secrets.toml.example .streamlit/secrets.toml   # fill in the values
+uv run streamlit run web/streamlit_app.py
+```
+
+The CLI (`uv run python app.py`) is unchanged and remains the fallback.
+
+### Cloud deployment
+
+1. Push the repository to a **private** GitHub repo. `.env`, `assets/*.pdf`,
+   `output_documents/`, `.runtime/` and `.streamlit/secrets.toml` are gitignored.
+2. share.streamlit.io → New app → pick the repo/branch → **Main file path:
+   `web/streamlit_app.py`** → Python 3.11.
+3. Settings → Secrets: paste the contents of `secrets.toml.example` with real values.
+   `BR_CERTIFICATE_B64` is `base64 -i assets/br.pdf | tr -d '\n'`; very large values can
+   be split into `BR_CERTIFICATE_B64_1`, `_2`, … instead.
+4. Settings → Sharing: keep the app private and invite the colleagues. The app also asks
+   for a login (`[auth]` or `WEB_PASSWORD`), so the URL alone is not enough.
+5. The first boot installs `packages.txt` and then Chromium on first use (30–120 s).
+
+### Version caution
+
+Community Cloud currently runs Debian 11, while current Playwright releases support
+Debian 12+. `web/requirements.txt` therefore pins `playwright==1.49.0`. The **Diagnostics**
+tab reports the Debian version, whether Chromium launches, whether the three login pages
+load and whether HKUST's reCAPTCHA becomes callable. If Chromium cannot start, the
+deployment is a no-go and the same `web/` app runs unchanged on Google Cloud Run (Debian
+12, free tier, card required) — see the roadmap below.
+
+### Runtime notes
+
+- Community Cloud sleeps after 12 hours without traffic; wake it by visiting the URL.
+- The filesystem is ephemeral. Download the ZIP offered after each job; files disappear on
+  restart or redeploy.
+- One job runs at a time; a second **Start** is refused while a job is active.
+- Portal egress is a datacenter IP. HKUST runs reCAPTCHA and CityU rate-limits; if the
+  Diagnostics probes fail, run the CLI locally instead.
 
 ---
 
