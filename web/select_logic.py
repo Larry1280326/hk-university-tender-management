@@ -41,18 +41,3 @@ def skipped_for_missing_email(tenders: Iterable[TenderNotice]) -> List[str]:
 
 def eoi_candidates(tenders: Iterable[TenderNotice]) -> List[TenderNotice]:
     return [tender for tender in tenders if tender.needs_eoi]
-
-
-def row_label(tender: TenderNotice) -> str:
-    """One-line description used in tables and confirmation messages."""
-    if tender.invited:
-        count = len(tender.documents)
-        detail = f"{count} document{'s' if count != 1 else ''}"
-    elif tender.needs_eoi:
-        detail = "Submit EOI & download"
-    elif tender.contact_email:
-        detail = tender.contact_email
-    else:
-        detail = ""
-    suffix = f" ({detail})" if detail else ""
-    return f"{tender.tender_no} — {tender.description}{suffix}"
