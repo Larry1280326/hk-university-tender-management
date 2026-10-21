@@ -10,10 +10,7 @@ import streamlit as st
 import config
 from mailer.template import generate_tender_email
 from web.auth import AuthResult
-from web.bootstrap import (
-    certificate_fingerprint,
-    materialize_certificate_from_secrets,
-)
+from web.bootstrap import certificate_fingerprint
 from web.jobs import JobError, JobManager, TERMINAL_STATUSES
 from web.select_logic import (
     draftable_tenders,
@@ -24,6 +21,11 @@ from web.select_logic import (
     split_groups,
 )
 from web.serialize import tenders_from_payloads, tenders_to_payloads
+from web.secrets_bridge import (
+    CertificateError,
+    validate_certificate_bytes,
+    write_certificate,
+)
 
 UNIVERSITIES = {
     "hkust": "HKUST",
@@ -51,6 +53,55 @@ def _workspace() -> Path:
 
 def _active_job_id() -> str:
     return str(st.session_state.get("active_job") or "")
+
+
+def _certificate_ready() -> bool:
+    return Path(config.BR_CERTIFICATE_PATH).is_file()
+
+
+def _store_uploaded_certificate(uploaded) -> tuple:
+    """Validate a sidebar upload and make it the attachment for subsequent drafts."""
+    data = uploaded.getvalue()
+    if not data.startswith(b"%PDF-"):
+        return None, "Please upload the BR certificate as a PDF."
+    try:
+        validate_certificate_bytes(data)
+    except CertificateError as exc:
+        return None, str(exc)
+
+    path = write_certificate(data, Path(config.ASSETS_DIR))
+    config.BR_CERTIFICATE_PATH = path
+    os.environ["BR_CERTIFICATE_PATH"] = str(path)
+    os.environ.pop("BR_CERTIFICATE_ERROR", None)
+    return path, ""
+
+
+def _render_br_upload() -> None:
+    st.sidebar.subheader("BR certificate")
+    if _certificate_ready():
+        st.sidebar.success("Ready for Gmail drafts")
+    else:
+        st.sidebar.warning("Not uploaded — drafts are disabled")
+
+    with st.sidebar.form("br_upload_form", clear_on_submit=True):
+        uploaded = st.file_uploader("Upload BR certificate (PDF)", type=["pdf"])
+        submitted = st.form_submit_button("Save certificate")
+
+    if submitted:
+        if uploaded is None:
+            st.sidebar.error("Choose a PDF first.")
+        else:
+            path, error = _store_uploaded_certificate(uploaded)
+            if path:
+                st.sidebar.success(f"Saved {path.name} for this runtime.")
+                st.rerun()
+            else:
+                st.sidebar.error(error)
+
+    st.sidebar.caption(
+        "The upload lives in the runtime directory and is lost when the app "
+        "restarts or redeploys. Upload it again after a wake-up."
+    )
 
 
 def _start_job(
@@ -168,7 +219,7 @@ def _selection_table(tenders, key: str) -> List[str]:
         rows,
         key=key,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         column_config={
             "Select": st.column_config.CheckboxColumn("Select", default=False),
             "Details": st.column_config.TextColumn("Details", width="large"),
@@ -226,7 +277,12 @@ def _render_scan_result(university: str, result: Dict) -> None:
         if selected_open:
             draftable = draftable_tenders(selected_open)
             skipped = skipped_for_missing_email(selected_open)
+            certificate_ready = _certificate_ready()
             st.caption(f"{len(draftable)} draftable open tender(s) selected.")
+            if not certificate_ready:
+                st.warning(
+                    "Upload the BR certificate in the sidebar before creating drafts."
+                )
             if skipped:
                 st.warning("No contact email, will be skipped: " + ", ".join(skipped))
             if draftable:
@@ -244,7 +300,7 @@ def _render_scan_result(university: str, result: Dict) -> None:
                 if st.button(
                     f"Create {len(draftable)} Gmail draft(s)",
                     key=f"draft_{university}",
-                    disabled=busy,
+                    disabled=busy or not certificate_ready,
                 ):
                     _start_job(
                         "draft",
@@ -361,39 +417,11 @@ def _render_diagnostics() -> None:
             "BR certificate": certificate_fingerprint(
                 str(config.BR_CERTIFICATE_PATH) if config.BR_CERTIFICATE_PATH else ""
             ),
-            "BR secret": (
-                f"configured ({os.environ.get('BR_CERTIFICATE_B64_LENGTH', '0')} chars)"
-                if os.environ.get("BR_CERTIFICATE_CONFIGURED") == "1"
-                else "not configured"
-            ),
             "Storage": "ephemeral — download results before the app restarts",
         }
     )
-    if os.environ.get("BR_CERTIFICATE_ERROR"):
-        st.error(os.environ["BR_CERTIFICATE_ERROR"])
-
-    uploaded = st.file_uploader(
-        "Temporary BR certificate upload (lost on restart — prefer BR_CERTIFICATE_B64)",
-        type=["pdf", "png", "jpg", "jpeg"],
-    )
-    if uploaded is not None:
-        suffix = Path(uploaded.name).suffix.lower() or ".pdf"
-        destination = Path(config.ASSETS_DIR) / f"br_certificate{suffix}"
-        destination.write_bytes(uploaded.getvalue())
-        config.BR_CERTIFICATE_PATH = destination
-        os.environ["BR_CERTIFICATE_PATH"] = str(destination)
-        st.success(f"Using {destination.name} for drafts in this runtime.")
 
     busy = bool(_active_job_id())
-    if st.button("Retry BR certificate from secrets", disabled=busy):
-        path, error = materialize_certificate_from_secrets()
-        if path:
-            config.BR_CERTIFICATE_PATH = path
-            st.success(f"Loaded {path}")
-            st.rerun()
-        else:
-            st.error(error)
-
     if st.button("Run diagnostics", disabled=busy):
         _start_job("diagnostic", "")
     if _active_job_id() and st.session_state.get("active_kind") == "diagnostic":
@@ -415,6 +443,8 @@ def render_app(auth: AuthResult) -> None:
         # The callable renders the sign-out control, because the authenticator's
         # logout button is what clears its cookie.
         auth.logout()
+    _render_br_upload()
+
     st.sidebar.warning(
         "Streamlit Cloud storage is temporary. Download the ZIP after each job; "
         "files disappear when the app restarts."

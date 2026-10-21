@@ -153,8 +153,8 @@ def run_draft(request: Dict[str, Any], reporter) -> Dict[str, Any]:
     certificate = Path(config.BR_CERTIFICATE_PATH)
     if not certificate.is_file():
         raise RuntimeError(
-            f"BR certificate not found at {certificate}. Configure BR_CERTIFICATE_B64 "
-            "in the app secrets (or upload it from Diagnostics) before creating drafts."
+            f"BR certificate not found at {certificate}. Upload the BR certificate "
+            "from the sidebar before creating drafts."
         )
 
     draftable = [

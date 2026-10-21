@@ -7,5 +7,5 @@ pydantic>=2.13.5
 python-dotenv>=1.2.3
 questionary>=2.1.1
 rich>=15.0.0
-streamlit>=1.37,<2
+streamlit>=1.50,<2
 streamlit-authenticator>=0.3.2,<0.5

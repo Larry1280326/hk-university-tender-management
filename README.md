@@ -227,8 +227,8 @@ To run the automated verification suite:
 uv run python -m unittest discover -s tests -v
 ```
 
-Of the 138 tests in the suite:
-- **131 unit tests run offline by default**, verifying mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, the interactive menu loop, tender selection, document download helpers, attachment validation, regex extraction, and `.env` dynamic loading without requiring network access.
+Of the 139 tests in the suite:
+- **132 unit tests run offline by default**, verifying mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, the interactive menu loop, tender selection, document download helpers, attachment validation, regex extraction, and `.env` dynamic loading without requiring network access.
 - **7 live-portal / slow-network integration tests are skipped by default** (`tests/test_portal_reachability.py` and `tests/test_portal_slow_network.py`). Enable them explicitly when testing against the live HKUST portal:
   ```bash
   RUN_LIVE_PORTAL_TEST=1 RUN_SLOW_NETWORK_TEST=1 uv run python -m unittest discover -s tests -v
@@ -251,7 +251,8 @@ cp secrets.toml.example .streamlit/secrets.toml   # fill in the values
 uv run streamlit run web/streamlit_app.py
 ```
 
-The CLI (`uv run python app.py`) is unchanged and remains the fallback.
+The CLI (`uv run python app.py`) is unchanged and remains the fallback. In the web app,
+upload the BR certificate from the sidebar after signing in; it lasts for that runtime.
 
 ### Cloud deployment
 
@@ -260,11 +261,25 @@ The CLI (`uv run python app.py`) is unchanged and remains the fallback.
 2. share.streamlit.io → New app → pick the repo/branch → **Main file path:
    `web/streamlit_app.py`** → Python 3.11.
 3. Settings → Secrets: paste the contents of `secrets.toml.example` with real values.
-   `BR_CERTIFICATE_B64` is `base64 -i assets/br.pdf | tr -d '\n'`; very large values can
-   be split into `BR_CERTIFICATE_B64_1`, `_2`, … instead.
+   The BR certificate does **not** need to be a secret: upload it in the app after signing
+   in. See [BR certificate](#br-certificate).
 4. Settings → Sharing: keep the app private and invite the colleagues. The app also asks
    for a login (`[auth]` or `WEB_PASSWORD`), so the URL alone is not enough.
 5. The first boot installs `packages.txt` and then Chromium on first use (30–120 s).
+
+### BR certificate
+
+The Business Registration PDF is not committed (`.gitignore` covers `assets/*.pdf`), so a
+hosted deployment receives it at runtime.
+
+**Upload it in the app (default flow).** After signing in, use **Upload BR certificate
+(PDF)** in the sidebar. The file is validated, written to
+`$RUNTIME_DIR/assets/br_certificate.pdf`, and used by every Gmail draft created in that
+runtime. The draft buttons stay disabled until a certificate is present.
+
+Community Cloud has no persistent disk: the upload disappears when the app restarts,
+redeploys or wakes from sleep, so upload it again. The CLI (and a local Streamlit run) can
+instead point `BR_CERTIFICATE_PATH` in `.env` straight at the PDF.
 
 ### Version caution
 
@@ -278,8 +293,8 @@ deployment is a no-go and the same `web/` app runs unchanged on Google Cloud Run
 ### Runtime notes
 
 - Community Cloud sleeps after 12 hours without traffic; wake it by visiting the URL.
-- The filesystem is ephemeral. Download the ZIP offered after each job; files disappear on
-  restart or redeploy.
+- The filesystem is ephemeral. Download the ZIP offered after each job; files and the
+  uploaded BR certificate disappear on restart or redeploy.
 - One job runs at a time; a second **Start** is refused while a job is active.
 - Portal egress is a datacenter IP. HKUST runs reCAPTCHA and CityU rate-limits; if the
   Diagnostics probes fail, run the CLI locally instead.

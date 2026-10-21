@@ -1,10 +1,11 @@
 """Unit tests for the pure helpers behind the Streamlit layer."""
 
-import base64
+import os
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from scraper.models import TenderDocument, TenderNotice
 from web.bootstrap import bootstrap_environment
@@ -15,7 +16,11 @@ from web.select_logic import (
     skipped_for_missing_email,
     split_groups,
 )
-from web.secrets_bridge import CertificateError, decode_br_certificate, scalar_secrets
+from web.secrets_bridge import (
+    CertificateError,
+    scalar_secrets,
+    validate_certificate_bytes,
+)
 from web.serialize import tender_from_payload, tender_to_payload
 from web.zip_utils import zip_directory
 
@@ -63,47 +68,38 @@ class TestSecretsBridge(unittest.TestCase):
         values = {"A": "1", "nested": {"B": "2"}, "flag": True}
         self.assertEqual(scalar_secrets(values), {"A": "1", "flag": "True"})
 
-    def test_decodes_single_payload(self):
-        data = decode_br_certificate(
-            {"BR_CERTIFICATE_B64": base64.b64encode(PDF_BYTES).decode()}
-        )
-        self.assertEqual(data, PDF_BYTES)
+    def test_accepts_a_pdf(self):
+        self.assertEqual(validate_certificate_bytes(PDF_BYTES), PDF_BYTES)
 
-    def test_joins_numbered_chunks_in_order(self):
-        encoded = base64.b64encode(PDF_BYTES).decode()
-        values = {
-            "BR_CERTIFICATE_B64_2": encoded[len(encoded) // 2 :],
-            "BR_CERTIFICATE_B64_1": encoded[: len(encoded) // 2],
-        }
-        self.assertEqual(decode_br_certificate(values), PDF_BYTES)
-
-    def test_rejects_bad_magic_and_bad_base64(self):
+    def test_rejects_a_non_document(self):
         with self.assertRaises(CertificateError):
-            decode_br_certificate(
-                {"BR_CERTIFICATE_B64": base64.b64encode(b"not a document").decode()}
-            )
-        with self.assertRaises(CertificateError):
-            decode_br_certificate({"BR_CERTIFICATE_B64": "%%%not-base64%%%"})
+            validate_certificate_bytes(b"not a document")
 
-    def test_missing_certificate_is_none(self):
-        self.assertIsNone(decode_br_certificate({}))
-
-    def test_bootstrap_materializes_the_certificate_and_env(self):
+    def test_bootstrap_sets_env_and_runtime_dirs(self):
         with tempfile.TemporaryDirectory() as tmp:
             env = {}
             bootstrap_environment(
-                {
-                    "HKUST_VENDOR_ID": "V1",
-                    "BR_CERTIFICATE_B64": base64.b64encode(PDF_BYTES).decode(),
-                },
+                {"HKUST_VENDOR_ID": "V1"},
                 environ=env,
                 runtime_dir=Path(tmp),
             )
             self.assertEqual(env["HKUST_VENDOR_ID"], "V1")
-            cert = Path(env["BR_CERTIFICATE_PATH"])
-            self.assertTrue(cert.is_file())
-            self.assertEqual(cert.read_bytes(), PDF_BYTES)
+            self.assertTrue((Path(tmp) / "assets").is_dir())
             self.assertIn("--no-sandbox", env["PLAYWRIGHT_LAUNCH_ARGS"])
+
+    def test_legacy_br_secret_is_not_exported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {}
+            bootstrap_environment(
+                {
+                    "BR_CERTIFICATE_B64": "x" * 1000,
+                    "HKUST_VENDOR_ID": "V1",
+                },
+                environ=env,
+                runtime_dir=Path(tmp),
+            )
+            self.assertNotIn("BR_CERTIFICATE_B64", env)
+            self.assertEqual(env["HKUST_VENDOR_ID"], "V1")
 
     def test_shell_environment_wins(self):
         env = {"HKUST_VENDOR_ID": "from-shell"}
@@ -113,6 +109,44 @@ class TestSecretsBridge(unittest.TestCase):
             runtime_dir=Path(tempfile.mkdtemp()),
         )
         self.assertEqual(env["HKUST_VENDOR_ID"], "from-shell")
+
+
+class TestUploadedCertificate(unittest.TestCase):
+    def setUp(self):
+        try:
+            from web import ui
+        except Exception as exc:  # streamlit extra not installed
+            self.skipTest(f"web UI unavailable: {exc}")
+        self.ui = ui
+        self.original_path = ui.config.BR_CERTIFICATE_PATH
+
+    def tearDown(self):
+        if hasattr(self, "ui"):
+            self.ui.config.BR_CERTIFICATE_PATH = self.original_path
+            os.environ.pop("BR_CERTIFICATE_PATH", None)
+
+    def test_pdf_is_saved_and_selected(self):
+        class Uploaded:
+            def getvalue(self):
+                return PDF_BYTES
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(self.ui.config, "ASSETS_DIR", Path(tmp)):
+                path, error = self.ui._store_uploaded_certificate(Uploaded())
+            self.assertEqual(error, "")
+            self.assertIsNotNone(path)
+            self.assertTrue(path.is_file())
+            self.assertEqual(path.read_bytes(), PDF_BYTES)
+            self.assertEqual(self.ui.config.BR_CERTIFICATE_PATH, path)
+
+    def test_non_pdf_is_rejected(self):
+        class Uploaded:
+            def getvalue(self):
+                return b"not a pdf"
+
+        path, error = self.ui._store_uploaded_certificate(Uploaded())
+        self.assertIsNone(path)
+        self.assertIn("PDF", error)
 
 
 class TestSelectLogic(unittest.TestCase):
