@@ -27,7 +27,7 @@ from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 import config
 from scraper import browser_utils
 from scraper.models import TenderDocument, TenderNotice
-from mailer.email_parser import normalize_tender_ref
+from mailer.email_parser import handled_tender_key, normalize_tender_ref
 
 EMAIL_REGEX = re.compile(r"([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)", re.IGNORECASE)
 CONTACT_PERSON_REGEX = re.compile(r"Contact\s+Person\s*[:：]\s*([^\n\r]+)", re.IGNORECASE)
@@ -60,13 +60,20 @@ COL_CLOSING_DATE = 2
 class TenderParser:
     """Parses the invitation and open-tender tables and their detail pages."""
 
-    LISTING_URL = config.HKUST_TENDER_OFFR_SEL_URL
+    # Identifies this university in the already-handled key; see
+    # ``mailer.email_parser.handled_tender_key``.
+    SLUG = "hkust"
 
     # (table selector, whether that table holds invited tenders), in display order.
     TENDER_TABLES = ((INVITE_TABLE_SELECTOR, True), (OPEN_TABLE_SELECTOR, False))
 
     def __init__(self, page: Page):
         self.page = page
+
+    @property
+    def listing_url(self) -> str:
+        """The offer-selection URL, read per call rather than bound at import time."""
+        return config.HKUST_TENDER_OFFR_SEL_URL
 
     def _on_listing_page(self, url: Optional[str] = None) -> bool:
         """Compare URLs tolerantly, ignoring query, fragment, and trailing slash.
@@ -76,7 +83,7 @@ class TenderParser:
         go_back.
         """
         normalise = lambda u: u.split("?")[0].split("#")[0].rstrip("/")
-        return normalise(url or self.page.url) == normalise(self.LISTING_URL)
+        return normalise(url or self.page.url) == normalise(self.listing_url)
 
     def _return_to_listing(self) -> None:
         """Get back to the tender tables, preferring a cheap history navigation."""
@@ -96,7 +103,7 @@ class TenderParser:
         except (PlaywrightTimeoutError, PlaywrightError):
             browser_utils.navigate(
                 self.page,
-                self.LISTING_URL,
+                self.listing_url,
                 ready_selector=DIRECTORY_ROW_SELECTOR,
                 label="tender-offer-selection-return",
             )
@@ -177,20 +184,18 @@ class TenderParser:
     def extract_tenders(
         self,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
-        existing_tenders: Optional[Set[str]] = None,
+        existing_tenders: Optional[Set[Tuple[str, str]]] = None,
     ) -> List[TenderNotice]:
-        """Extract both tender tables, skipping tenders already drafted in Gmail."""
-        normalized_existing: Set[str] = set()
-        if existing_tenders:
-            for t_ref in existing_tenders:
-                if t_ref:
-                    norm = normalize_tender_ref(t_ref)
-                    if norm:
-                        normalized_existing.add(norm)
+        """Extract both tender tables, skipping tenders already drafted in Gmail.
+
+        ``existing_tenders`` holds ``(slug, normalized_ref)`` keys, so a reference handled
+        at another university does not hide the same reference here.
+        """
+        handled = set(existing_tenders or ())
 
         if not browser_utils.navigate(
             self.page,
-            self.LISTING_URL,
+            self.listing_url,
             ready_selector=DIRECTORY_ROW_SELECTOR,
             allow_missing=True,
             label="tender-offer-selection",
@@ -224,7 +229,7 @@ class TenderParser:
             closing_date = cells[COL_CLOSING_DATE].inner_text().strip()
 
             norm_no = normalize_tender_ref(tender_no)
-            if norm_no and norm_no in normalized_existing:
+            if norm_no and handled_tender_key(self.SLUG, norm_no) in handled:
                 if progress_callback:
                     progress_callback(
                         position + 1, total_rows, f"{tender_no} (Already in Gmail - Skipped)"

@@ -30,7 +30,7 @@ class TestTenderParserSkip(unittest.TestCase):
             progress_calls = []
             tenders = parser.extract_tenders(
                 progress_callback=lambda curr, total, name: progress_calls.append(name),
-                existing_tenders={"TNP2600099"},
+                existing_tenders={("hkust", "TNP2600099")},
             )
 
         # Only the new tender is returned; the already-drafted one is dropped entirely.
@@ -44,6 +44,26 @@ class TestTenderParserSkip(unittest.TestCase):
 
         # Progress callback should record the skip.
         self.assertTrue(any("Already in Gmail" in msg for msg in progress_calls))
+
+    def test_reference_handled_at_another_university_does_not_hide_it(self):
+        """The hide key is (slug, ref): the same number at CUHK is a different tender."""
+        html = tender_table(
+            "openTenderList",
+            OPEN_TITLE,
+            [("TNP2600099", "Fitting Out Works for Office", "2026-10-15")],
+        )
+
+        with rendered_page(html) as page, parser_on(page) as parser:
+            parser._open_detail_page = MagicMock()
+            parser._parse_enquiry_details = MagicMock(
+                return_value=("Mimi WONG", "pumimi@ust.hk", "Raw info")
+            )
+
+            tenders = parser.extract_tenders(
+                existing_tenders={("cuhk", "TNP2600099")},
+            )
+
+        self.assertEqual([t.tender_no for t in tenders], ["TNP2600099"])
 
     def test_normalize_tender_ref_consistency(self):
         """Ensure normalization handles variations with slashes, hyphens, and whitespace."""

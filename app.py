@@ -4,7 +4,7 @@ import argparse
 import sys
 import webbrowser
 from contextlib import contextmanager
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Tuple
 
 # Ensure standard UTF-8 console output for Windows cmd/PowerShell
 if sys.platform == "win32":
@@ -27,6 +27,7 @@ from scraper.CityU.documents import process_cityu_tenders
 from scraper.CityU.parser import CityUTenderParser
 from scraper.models import TenderNotice
 from mailer.template import generate_tender_email, TenderEmailDraft
+from mailer.email_parser import handled_tender_key
 from mailer.google_account import GoogleAccountMailer
 from mailer.webmail_helper import generate_gmail_compose_url, export_eml_file
 from cli_views import (
@@ -115,7 +116,7 @@ def cityu_portal_session(headless: bool = True):
 
 def scrape_tenders(
     parser: TenderParser,
-    existing_tenders: Optional[Set[str]] = None,
+    existing_tenders: Optional[Set[Tuple[str, str]]] = None,
 ) -> List[TenderNotice]:
     """Extract both tender tables behind a progress bar."""
     with Progress(
@@ -418,10 +419,12 @@ def draft_emails_for_tenders(drafts: List[TenderEmailDraft]) -> None:
         console.print("\n[green]Done! EML files exported to output_drafts directory.[/green]")
 
 
-def get_processed_tender_numbers() -> Set[str]:
+def get_processed_tender_numbers() -> Set[Tuple[str, str]]:
     """Scan Inbox, Drafts and Sent for tenders already dealt with.
 
-    Returns the tender references, which the scraper uses to hide those rows.
+    Returns ``(slug, normalized_ref)`` keys, which the scraper uses to hide those rows.
+    The slug keeps a reference handled at one university from hiding another university's
+    identically numbered tender.
     """
     mailer = GoogleAccountMailer()
     if not mailer.is_configured():
@@ -446,7 +449,7 @@ def get_processed_tender_numbers() -> Set[str]:
         f" - any still on the portal are hidden from the list."
     )
 
-    return set(handled)
+    return {handled_tender_key(TenderParser.SLUG, ref) for ref in handled}
 
 
 def handle_cuhk_selection_and_download(

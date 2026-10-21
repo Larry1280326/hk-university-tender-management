@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from playwright.sync_api import sync_playwright
 
+import config
 from scraper.HKUST.parser import TenderParser
 
 INVITE_TITLE = "My Tender Invitation / Interested Tender(s)"
@@ -121,11 +122,12 @@ def rendered_page(html: str):
 def parser_on(page):
     """A ``TenderParser`` over an already-rendered page with portal navigation stubbed.
 
-    ``set_content`` leaves the page at ``about:blank``, so pointing ``LISTING_URL`` there
-    makes ``_on_listing_page`` succeed and keeps ``extract_tenders`` from trying to return
-    to a real URL mid-test.
+    ``set_content`` leaves the page at ``about:blank``, so pointing the configured listing
+    URL there makes ``_on_listing_page`` succeed and keeps ``extract_tenders`` from trying
+    to return to a real URL mid-test. The parser reads the URL per call, so patching
+    ``config`` is what takes effect.
     """
-    with patch.object(TenderParser, "LISTING_URL", "about:blank"), patch(
+    with patch.object(config, "HKUST_TENDER_OFFR_SEL_URL", "about:blank"), patch(
         "scraper.browser_utils.navigate", return_value=True
     ):
         yield TenderParser(page)

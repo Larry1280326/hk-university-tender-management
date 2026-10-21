@@ -2,7 +2,7 @@
 
 import re
 from email.header import decode_header
-from typing import Optional, Set
+from typing import Optional, Set, Tuple
 
 HKUST_TN_PATTERN = re.compile(
     r"\b(TN[A-Z0-9]{6,12}(?:\s*PQ)?)\b",
@@ -59,3 +59,14 @@ def normalize_tender_ref(ref: Optional[str]) -> str:
     if not ref:
         return ""
     return re.sub(r"[\s\-_/]", "", ref).upper()
+
+
+def handled_tender_key(slug: str, ref: Optional[str]) -> Tuple[str, str]:
+    """Identity of an already-handled tender: the owning university plus its reference.
+
+    A normalized reference is not unique on its own -- ``EO/2026/012`` can exist at two
+    universities and both collapse to ``EO2026012`` -- so the slug is part of the key.
+    Without it, a tender handled at one university hides an identically numbered tender
+    at another.
+    """
+    return ((slug or "").strip().lower(), normalize_tender_ref(ref))

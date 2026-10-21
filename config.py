@@ -38,9 +38,6 @@ HKUST_WELCOME_URL = os.getenv(
     "HKUST_WELCOME_URL", "https://w5.ab.ust.hk/jstd/td_welcome?page=td_login"
 )
 HKUST_LOGIN_URL = os.getenv("HKUST_LOGIN_URL", "https://w5.ab.ust.hk/jstd/td_login")
-HKUST_TENDER_NOTICE_URL = os.getenv(
-    "HKUST_TENDER_NOTICE_URL", "https://w5.ab.ust.hk/jstd/td_tender_notice"
-)
 # The offer-selection page renders two tender tables: tenders the vendor was invited
 # to (documents already released) and open tenders (documents requested by email).
 HKUST_TENDER_OFFR_SEL_URL = os.getenv(

@@ -82,7 +82,10 @@ class TestProcessedTenderNumbers(unittest.TestCase):
 
             result = app.get_processed_tender_numbers()
 
-        self.assertEqual(result, {"TNH2600105", "TNP2600099"})
+        self.assertEqual(
+            result,
+            {("hkust", "TNH2600105"), ("hkust", "TNP2600099")},
+        )
 
     def test_empty_scan_hides_nothing(self):
         with patch.object(app, "GoogleAccountMailer") as mailer_cls:

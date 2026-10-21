@@ -287,7 +287,7 @@ class CityUTenderParser:
     def extract_tenders(
         self,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
-        existing_tenders: Optional[Set[str]] = None,
+        existing_tenders: Optional[Set[Tuple[str, str]]] = None,
     ) -> List[TenderNotice]:
         """Extract all active ('Issued') RFQs and Tenders from CityU ETS."""
         raw_items: List[Dict[str, str]] = []

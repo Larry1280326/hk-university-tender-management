@@ -25,7 +25,10 @@ from scraper.HKUST.parser import (
 from scraper.models import TenderNotice
 from scraper.paths import tender_dir_name
 
-LISTING_URL = config.HKUST_TENDER_OFFR_SEL_URL
+
+def _listing_url() -> str:
+    """The offer-selection URL, read per call rather than bound at import time."""
+    return config.HKUST_TENDER_OFFR_SEL_URL
 
 
 def _normalise(url: str) -> str:
@@ -35,11 +38,12 @@ def _normalise(url: str) -> str:
 
 def _ensure_listing(page: Page) -> None:
     """Return to the offer selection page, preferring browser history."""
-    if _normalise(page.url) == _normalise(LISTING_URL):
+    listing_url = _listing_url()
+    if _normalise(page.url) == _normalise(listing_url):
         return
     try:
         page.go_back(wait_until="domcontentloaded", timeout=config.NAV_TIMEOUT_MS)
-        if _normalise(page.url) != _normalise(LISTING_URL):
+        if _normalise(page.url) != _normalise(listing_url):
             raise PlaywrightTimeoutError("go_back did not return to the offer selection page")
         page.wait_for_selector(
             DIRECTORY_ROW_SELECTOR, state="attached", timeout=config.READY_TIMEOUT_MS
@@ -47,7 +51,7 @@ def _ensure_listing(page: Page) -> None:
     except (PlaywrightTimeoutError, PlaywrightError):
         browser_utils.navigate(
             page,
-            LISTING_URL,
+            listing_url,
             ready_selector=DIRECTORY_ROW_SELECTOR,
             label="tender-documents-return",
         )

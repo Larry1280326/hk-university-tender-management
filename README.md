@@ -2,7 +2,7 @@
 
 Automated workflow supporting **HKUST** (`w5.ab.ust.hk/jstd`), **CUHK (CUPro)** (`cupro-cuhk.com`), and **CityU (ETS)** (`etender.cityu.edu.hk`):
 1. **HKUST Workflow**:
-   - Before scraping, scan Gmail (`Inbox`, `Drafts`, and `Sent`) for tenders you have already dealt with over the last `MAIL_LOOKBACK_DAYS` days (default 60), so they are hidden from the scrape.
+   - Before scraping the HKUST portal, scan Gmail (`Inbox`, `Drafts`, and `Sent`) for tenders you have already dealt with over the last `MAIL_LOOKBACK_DAYS` days (default 60), so they are hidden from the scrape. (The CUHK and CityU workflows do not run this check yet.)
    - Log in to the HKUST e-Tendering Portal (`https://w5.ab.ust.hk/jstd/td_login`), accepting Terms & Conditions if redirected to `td_welcome`, and wait for Google reCAPTCHA readiness.
    - Scrape the offer selection page (`td_tender_offr_sel`), which renders **My Tender Invitation / Interested Tender(s)** (`#inviteTenderList`) and **Tender Notice** (`#openTenderList`).
    - Open the interactive checklist directly for selection, download released documents for selected **invited tenders** into `<DOCUMENT_DIR>/HKUST/<project_name>/`, and automatically draft personalized enquiry emails in **Gmail** (with company details and Business Registration certificate attached) for selected **open tenders**.
@@ -77,7 +77,7 @@ COMPANY_ADDRESS=Your Company Address
 # Optional custom sign-off override (defaults to Contact Person + Company Name)
 # SIGN_OFF="Best regards,\nYour Name\nYour Company Name"
 
-# Where tender documents are saved (organized under <DOCUMENT_DIR>/<UNIVERSITY>/<tender_no>/)
+# Where tender documents are saved (organized under <DOCUMENT_DIR>/<UNIVERSITY>/<project_name>/)
 DOCUMENT_DIR=output_documents
 
 # Optional: Portal URL & Navigation Tuning Overrides (defaults shown)
@@ -177,7 +177,7 @@ uv run python app.py --visible
 
 ## Tender Tracking & Gmail Labels
 
-1. **Already-handled check (runs before every scrape)**: the tool reads the **subject lines** of your
+1. **Already-handled check (runs before every HKUST scrape)**: the tool reads the **subject lines** of your
    Inbox, Drafts and Sent folders for the last `MAIL_LOOKBACK_DAYS` days (default 60). A tender
    found there is hidden from the tender list, and the run reports the total number of handled tender
    references found. This is what makes a reply you sent count as handled — labels are never consulted, so
@@ -227,8 +227,8 @@ To run the automated verification suite:
 uv run python -m unittest discover -s tests -v
 ```
 
-Of the 119 tests in the suite:
-- **112 unit tests run offline by default**, verifying mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, the interactive menu loop, tender selection, document download helpers, attachment validation, regex extraction, and `.env` dynamic loading without requiring network access.
+Of the 120 tests in the suite:
+- **113 unit tests run offline by default**, verifying mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, the interactive menu loop, tender selection, document download helpers, attachment validation, regex extraction, and `.env` dynamic loading without requiring network access.
 - **7 live-portal / slow-network integration tests are skipped by default** (`tests/test_portal_reachability.py` and `tests/test_portal_slow_network.py`). Enable them explicitly when testing against the live HKUST portal:
   ```bash
   RUN_LIVE_PORTAL_TEST=1 RUN_SLOW_NETWORK_TEST=1 uv run python -m unittest discover -s tests -v
@@ -236,13 +236,14 @@ Of the 119 tests in the suite:
 
 ---
 
-## Roadmap: Beyond HKUST
+## Roadmap: More Universities
 
-The tool is HKUST-shaped: its portal URLs, login selectors, table markup, tender-number
-formats and Gmail label are all HKUST values, and the menu offers a single scrape action
-now labelled with its university. The intent is to cover other Hong Kong universities,
-which do not publish their tenders the same way. **None of this is built yet** — this
-section records the plan so the next step does not have to rediscover it.
+The tool now covers three universities: HKUST (a login portal), CUHK (CUPro) and CityU
+(ETS). CUHK and CityU run the same procurement platform, so their packages differ only in
+host and login entry point. Each university still owns its own `scraper/<SLUG>/` package,
+and CUHK and CityU are near-copies of each other. The remaining work is to put all three
+behind one provider interface, so that a fourth university — which will not necessarily
+publish the same way — does not mean copying a package again.
 
 ### What is already portable
 
@@ -251,15 +252,18 @@ reused rather than rebuilt:
 
 - **`scraper/browser_utils.py`** — `NavigationError`, the retry policy
   (`_is_retryable`, `_RETRYABLE_NET_MARKERS`), `RequestTracker`, `wait_for_predicate`,
-  `dump_failure_artifacts`, `navigate`. Only its `config.*` reads are HKUST-branded.
+  `dump_failure_artifacts`, `navigate`. It reads the neutral `config.NAV_*`, `config.*_TIMEOUT_MS`
+  and `config.DEBUG_ARTIFACTS` names.
 - **`mailer/mime.py`** and **`mailer/webmail_helper.py`** — entirely generic.
 - **The IMAP mechanics in `mailer/google_account.py`** — `imap_session`,
   `_find_folder_by_flag`, `save_draft`, `get_handled_tenders`. `save_draft` already takes a
   `tag_prefix`, so a per-university Gmail label needs no IMAP change, only threading.
 - **`scraper/paths.py`** — `safe_dir_name` / `tender_dir_name`, shared by the HKUST,
   CUHK, and CityU downloaders.
-- **The HKUST download loop in `scraper/HKUST/documents.py`** — `_ensure_listing`,
-  `_download_one`.
+- **The download-loop shape** — `_ensure_listing` and `_download_one` in
+  `scraper/HKUST/documents.py` are duplicated as `_download_one_cuhk` and
+  `_download_one_cityu`; the three should share one implementation rather than keep
+  three copies.
 - **All company/identity configuration** — `COMPANY_*`, `CONTACT_*`, `SIGN_OFF`,
   `BR_CERTIFICATE_PATH`, `GMAIL_*`, the two email templates.
 
@@ -276,10 +280,14 @@ per-university provider:
 | `mailer/email_parser.py` | `HKUST_TN_PATTERN`, `HKUST_CODE_PATTERN` — the ref formats the mailbox scan matches on |
 | `app.py`, `cli_views.py` | menu strings, banner, table titles |
 
-Five of the `HKUST_*` names are merely misnamed rather than portal-specific —
-`HKUST_NAV_ATTEMPTS`, `HKUST_NAV_BACKOFF_SECONDS`, `HKUST_RETRY_ON_NET_ERRORS`,
-`HKUST_DEBUG_ARTIFACTS`, `HKUST_MAIL_LOOKBACK_DAYS`. `HKUST_TENDER_NOTICE_URL` is dead:
-nothing reads it.
+The five tuning knobs are no longer misnamed: `NAV_ATTEMPTS`, `NAV_BACKOFF_SECONDS`,
+`RETRY_ON_NET_ERRORS`, `DEBUG_ARTIFACTS` and `MAIL_LOOKBACK_DAYS` are the real names, with
+the old `HKUST_*` spelling still honoured as an environment fallback. The dead
+`HKUST_TENDER_NOTICE_URL` has been removed.
+
+CUHK and CityU are near-copies of each other — `auth.py`, `parser.py` and `documents.py`
+differ only in identifiers, URLs and a couple of login steps. Those duplicate copies are
+the strongest argument for the provider interface below.
 
 ### Target architecture
 
@@ -305,7 +313,7 @@ scraper/
     parser.py
     documents.py
 app.py                       # menu and per-university workflows
-mailer/email_parser.py       # keeps normalize_tender_ref / decode_mime_words
+mailer/email_parser.py       # normalize_tender_ref, handled_tender_key, decode_mime_words
 
 # still to come:
 scraper/base.py              # TenderProvider protocol, PlaywrightProvider base, PortalConfig
@@ -347,10 +355,10 @@ Promoted neutral knobs keep the old spelling alive via nested fallback —
 > be purely additive and must not rewrite existing keys.
 
 **Documents and labels.** One flat Gmail label per university (`HKUST Tenders`,
-`PolyU Tenders`) leaves the user's existing label intact rather than orphaning it. The
-documents directory stays `output_documents/<tender_no>/` for HKUST — a live tool should not
-silently move files the user already has — while later providers default to
-`output_documents/<slug>/`.
+`PolyU Tenders`) leaves the user's existing label intact rather than orphaning it. All
+three providers save under `output_documents/<UNIVERSITY>/<project_name>/`, where the
+project name is the tender description; existing HKUST files already live under
+`output_documents/HKUST/`, so nothing moves.
 
 ### Why the interface must not assume a browser
 
@@ -366,24 +374,22 @@ If the provider interface took a logged-in Playwright page, the feed-based sourc
 to fake one. It has to accept "a way to produce tender notices", of which Playwright is one
 implementation.
 
-### Three latent defects to fix on the way
+### Latent defects
 
-These are real today, not hypotheticals, and each one silently breaks the moment a second
-university exists:
+Two of these are fixed; the menu router is still open:
 
 1. **The menu router.** `interactive_menu()` routes with `choice.startswith("1")` /
    `"2"` / `"3"` (`app.py`). At ten or more entries `"10. Exit".startswith("1")` is `True`,
    so Exit would dispatch into the scrape workflow. The flat list must route on the parsed
    leading integer.
-2. **`LISTING_URL` is bound at import time.** `scraper/HKUST/parser.py` and
-   `scraper/HKUST/documents.py` both read `config.HKUST_TENDER_OFFR_SEL_URL` into a module or class
-   constant, so the URL is fixed the moment the module is imported. A per-provider URL must
-   become an instance attribute read at call time, or a second provider silently keeps
-   pointing at HKUST.
-3. **`normalize_tender_ref` collapses namespaces.** It strips `/ - _` and whitespace and
-   upper-cases, so `EO/2026/012` and another university's `EO/2026/012` both become
-   `EO2026012` — indistinguishable. The hide key for already-handled tenders must be
-   `(slug, normalized_ref)`, not the normalized ref alone.
+2. ✅ **`LISTING_URL` is bound at import time** — fixed. `TenderParser.listing_url` and
+   `_listing_url()` now read `config.HKUST_TENDER_OFFR_SEL_URL` on every call, so the URL
+   follows configuration instead of whatever it held when the module was imported.
+3. ✅ **`normalize_tender_ref` collapses namespaces** — the hide key is now
+   `(slug, normalized_ref)` (`mailer.email_parser.handled_tender_key`), so a reference
+   handled at one university no longer hides another university's identically numbered
+   tender. The normalization itself is unchanged; only the key carries the university.
+   CUHK and CityU do not run the mailbox check yet, which is the remaining half.
 
 ### Migration steps
 
@@ -394,11 +400,11 @@ change.
 | # | Step | Class |
 |---|---|---|
 | 1 | ✅ **Models out.** `scraper/models.py` now owns `TenderNotice` / `TenderDocument`; importers use it directly. Still to add: the defaulted `provider` field. | `[move]` |
-| 2 | ✅ **Per-university packages.** `scraper/{HKUST,CUHK,CityU}/{auth,parser,documents}.py`; shared `scraper/paths.py`. Still to do: delete the dead `HKUST_TENDER_NOTICE_URL` and fix the `LISTING_URL` binding. | `[move]` |
+| 2 | ✅ **Per-university packages.** `scraper/{HKUST,CUHK,CityU}/{auth,parser,documents}.py`; shared `scraper/paths.py`. The dead `HKUST_TENDER_NOTICE_URL` is gone and the listing URL is read at call time. | `[move]` |
 | 3 | **The interface and registry.** `scraper/base.py` + `scraper/registry.py`; `HKUSTProvider` wraps auth + parser + documents behind `fetch_tenders` / `download_documents`. `app.portal_session` moves into `PlaywrightProvider.portal_session`. | `[structure]` |
 | 4 | **Config namespacing.** `load_portal_config()` in `config.py`; HKUST defaults move into its provider; the five neutral knobs are promoted with the old env spelling still honoured. | `[structure]` |
 | 5 | **Flat menu.** Choices built from the registry, separator, integer-prefix router replacing `startswith`. | `[UI]` |
-| 6 | **Multi-university mail.** Per-provider `extract_refs`; `get_processed_tender_numbers` scans **once** and then filters by owning university (an extra scan is another login on a slow link); hide key becomes `(slug, ref)`; the report line names the owning university. | `[behaviour]` |
+| 6 | **Multi-university mail.** The hide key is already `(slug, ref)`. Still to do: per-provider `extract_refs`, one scan filtered by owning university (an extra scan is another login on a slow link), and a report line that names the owning university. | `[behaviour]` |
 | 7 | **The second provider — two of them.** Add one HTTP-feed university *and* one login portal together, each with its own `tests/fixtures/<slug>.py` and a shared `test_provider_contract.py`. A Protocol validated by only one implementation is just a rename. | new feature |
 
 Step 4's cost is in the tests: `tests/test_browser_utils.py` and
@@ -413,19 +419,19 @@ change what `browser_utils` reads. Those tests move to the neutral names in that
   HKUST needed reCAPTCHA-callability probing, two tables whose detail pages are located by
   row-heading *text*, and localized IMAP folder names. Each login portal is work of that kind;
   a public feed is a few hours. **Validate the cheap archetype first**, then one login portal.
-- **Two candidates need a supplier account before anything is visible** (PolyU, CUHK CUPro).
-  Without an account such a provider is unbuildable — this gates feasibility more than any
-  technical detail.
+- **PolyU still needs a supplier account before anything is visible.** Without an account
+  such a provider is unbuildable — this gates feasibility more than any technical detail.
+  CUHK and CityU accounts were obtained, which is what made their providers possible.
 - **Portal terms of use** need checking per site. HKUST already sits behind reCAPTCHA, i.e.
   the portal is actively distinguishing browsers from automation; that is a decision to take
   deliberately, not a detail.
 - **Aggregators are a tempting shortcut** (`5quote.com.hk`, `tendersontime.com` republish many
   universities at once) but they are third parties behind registration walls with some
   placeholder dates. Recommendation: evaluate, and probably do not add them as providers.
-- **The `invited` split may not generalise.** `TenderNotice.invited` and the downloadable
-  documents encode HKUST's separate invitation table. A feed-only university yields notices
-  with `invited=False, documents=[]` always; the interface must tolerate that rather than
-  inventing a parallel concept.
+- **The `invited` split generalises only so far.** For HKUST it means the separate
+  invitation table; for CUHK and CityU it means "EOI already submitted, so the documents
+  are unlocked". A feed-only university yields notices with `invited=False, documents=[]`
+  always; the interface must tolerate that rather than inventing a parallel concept.
 - **The enquiry-to-contact parsing may not generalise either.** `_parse_enquiry_details` only
   works because of HKUST's exact row headings. A provider that has no contact simply leaves
   `contact_email` empty — the drafting flow already skips those, which is the right escape
@@ -435,6 +441,6 @@ change what `browser_utils` reads. Those tests move to the neutral names in that
   reuse path: `browser_utils.dump_failure_artifacts` already writes a failure page's HTML to
   `assets/debug/`, so real pages can be captured and committed (credentials stripped) instead
   of invented.
-- **Nothing here is verified about the other portals yet.** Their entry points came from a web
-  search, not from reading their DOM or feeds. Each needs the same verification pass HKUST got
-  before it can be planned concretely.
+- **The unverified portals are HKU, HKMU and PolyU.** Their entry points came from a web
+  search, not from reading their DOM or feeds. Each needs the same verification pass HKUST,
+  CUHK and CityU got before it can be planned concretely.
