@@ -11,6 +11,7 @@ from typing import Mapping, MutableMapping, Optional
 
 from web.secrets_bridge import (
     CertificateError,
+    certificate_payload_length,
     materialize_br_certificate,
     scalar_secrets,
 )
@@ -63,6 +64,10 @@ def bootstrap_environment(
     env.setdefault("ASSETS_DIR", str(assets))
     env.setdefault("PLAYWRIGHT_LAUNCH_ARGS", DEFAULT_LAUNCH_ARGS)
 
+    payload_length = certificate_payload_length(values)
+    env["BR_CERTIFICATE_CONFIGURED"] = "1" if payload_length else "0"
+    env["BR_CERTIFICATE_B64_LENGTH"] = str(payload_length)
+
     try:
         certificate = materialize_br_certificate(values, assets)
     except CertificateError as exc:
@@ -76,6 +81,30 @@ def bootstrap_environment(
         env["BR_CERTIFICATE_PATH"] = str(certificate)
 
     return env
+
+
+def materialize_certificate_from_secrets() -> tuple:
+    """Retry decoding the BR certificate from the live ``st.secrets`` mapping.
+
+    Returns ``(path, "")`` on success or ``(None, reason)`` so Diagnostics can show the
+    real problem (empty value vs invalid base64 vs bad magic bytes).
+    """
+    values = _streamlit_secrets()
+    if not values:
+        return None, "No secrets were loaded."
+    assets = Path(os.environ.get("ASSETS_DIR") or (PROJECT_ROOT / ".runtime" / "assets"))
+    try:
+        path = materialize_br_certificate(values, assets)
+    except CertificateError as exc:
+        os.environ["BR_CERTIFICATE_ERROR"] = str(exc)
+        return None, str(exc)
+    if path is None:
+        message = "BR_CERTIFICATE_B64 is empty or missing."
+        os.environ["BR_CERTIFICATE_ERROR"] = message
+        return None, message
+    os.environ["BR_CERTIFICATE_PATH"] = str(path)
+    os.environ.pop("BR_CERTIFICATE_ERROR", None)
+    return path, ""
 
 
 def certificate_fingerprint(path: Optional[str]) -> str:

@@ -54,6 +54,11 @@ def _certificate_payload(values: Mapping) -> str:
     return "".join(value for _, value in chunks)
 
 
+def certificate_payload_length(values: Mapping) -> int:
+    """Length of the configured base64 payload, for diagnostics (never the value)."""
+    return len(_certificate_payload(values))
+
+
 def decode_br_certificate(values: Mapping) -> Optional[bytes]:
     """Decode the configured BR certificate, or return ``None`` when none is configured."""
     payload = _certificate_payload(values)

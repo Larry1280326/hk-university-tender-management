@@ -10,7 +10,10 @@ import streamlit as st
 import config
 from mailer.template import generate_tender_email
 from web.auth import AuthResult
-from web.bootstrap import certificate_fingerprint
+from web.bootstrap import (
+    certificate_fingerprint,
+    materialize_certificate_from_secrets,
+)
 from web.jobs import JobError, JobManager, TERMINAL_STATUSES
 from web.select_logic import (
     draftable_tenders,
@@ -358,9 +361,16 @@ def _render_diagnostics() -> None:
             "BR certificate": certificate_fingerprint(
                 str(config.BR_CERTIFICATE_PATH) if config.BR_CERTIFICATE_PATH else ""
             ),
+            "BR secret": (
+                f"configured ({os.environ.get('BR_CERTIFICATE_B64_LENGTH', '0')} chars)"
+                if os.environ.get("BR_CERTIFICATE_CONFIGURED") == "1"
+                else "not configured"
+            ),
             "Storage": "ephemeral — download results before the app restarts",
         }
     )
+    if os.environ.get("BR_CERTIFICATE_ERROR"):
+        st.error(os.environ["BR_CERTIFICATE_ERROR"])
 
     uploaded = st.file_uploader(
         "Temporary BR certificate upload (lost on restart — prefer BR_CERTIFICATE_B64)",
@@ -375,6 +385,15 @@ def _render_diagnostics() -> None:
         st.success(f"Using {destination.name} for drafts in this runtime.")
 
     busy = bool(_active_job_id())
+    if st.button("Retry BR certificate from secrets", disabled=busy):
+        path, error = materialize_certificate_from_secrets()
+        if path:
+            config.BR_CERTIFICATE_PATH = path
+            st.success(f"Loaded {path}")
+            st.rerun()
+        else:
+            st.error(error)
+
     if st.button("Run diagnostics", disabled=busy):
         _start_job("diagnostic", "")
     if _active_job_id() and st.session_state.get("active_kind") == "diagnostic":
