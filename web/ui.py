@@ -15,7 +15,6 @@ from web.jobs import JobError, JobManager, TERMINAL_STATUSES
 from web.select_logic import (
     draftable_tenders,
     eoi_candidates,
-    row_label,
     selected_tenders,
     skipped_for_missing_email,
     split_groups,
@@ -76,31 +75,36 @@ def _store_uploaded_certificate(uploaded) -> tuple:
     return path, ""
 
 
+def _handle_br_upload() -> None:
+    """Store the selected PDF as soon as the uploader changes; no submit button."""
+    uploaded = st.session_state.get("br_upload")
+    if uploaded is None:
+        return
+    path, error = _store_uploaded_certificate(uploaded)
+    if error:
+        st.session_state["br_upload_error"] = error
+    elif path:
+        st.session_state.pop("br_upload_error", None)
+
+
 def _render_br_upload() -> None:
-    st.sidebar.subheader("BR certificate")
-    if _certificate_ready():
-        st.sidebar.success("Ready for Gmail drafts")
-    else:
+    st.sidebar.subheader("Documents")
+    if not _certificate_ready():
         st.sidebar.warning("Not uploaded — drafts are disabled")
 
-    with st.sidebar.form("br_upload_form", clear_on_submit=True):
-        uploaded = st.file_uploader("Upload BR certificate (PDF)", type=["pdf"])
-        submitted = st.form_submit_button("Save certificate")
+    error = st.session_state.pop("br_upload_error", None)
+    if error:
+        st.sidebar.error(error)
 
-    if submitted:
-        if uploaded is None:
-            st.sidebar.error("Choose a PDF first.")
-        else:
-            path, error = _store_uploaded_certificate(uploaded)
-            if path:
-                st.sidebar.success(f"Saved {path.name} for this runtime.")
-                st.rerun()
-            else:
-                st.sidebar.error(error)
-
-    st.sidebar.caption(
-        "The upload lives in the runtime directory and is lost when the app "
-        "restarts or redeploys. Upload it again after a wake-up."
+    st.sidebar.file_uploader(
+        "Upload BR certificate (PDF)",
+        type=["pdf"],
+        key="br_upload",
+        on_change=_handle_br_upload,
+        help=(
+            "Used as the attachment for Gmail drafts created in this running app. "
+            "It is not uploaded anywhere else."
+        ),
     )
 
 
@@ -110,6 +114,7 @@ def _start_job(
     *,
     options: Optional[Dict] = None,
     tenders: Optional[List] = None,
+    group: str = "",
 ) -> bool:
     try:
         job = _manager().start(
@@ -124,65 +129,121 @@ def _start_job(
         st.error(str(exc))
         return False
     if kind == "scan":
-        # A fresh scan must not inherit ticks from the previous table.
+        # A fresh scan must not inherit ticks from the previous list. The row keys carry
+        # an index and tender number, so clear the whole prefix.
         st.session_state.pop(f"scan_result_{university}", None)
         for group in ("invited", "open"):
-            st.session_state.pop(f"select_{university}_{group}", None)
+            prefix = f"select_{university}_{group}"
+            for key in list(st.session_state.keys()):
+                if key.startswith(prefix):
+                    st.session_state.pop(key, None)
+    elif kind == "download":
+        suffix = f"_{group}" if group else ""
+        # The button changes back to Fetch while a new package is being built.
+        st.session_state.pop(f"scan_result_download_{university}{suffix}", None)
+        st.session_state.pop(
+            f"scan_result_download_{university}{suffix}_error", None
+        )
+        st.session_state[f"fetched_refs_{university}{suffix}"] = sorted(
+            str(tender.get("tender_no") or "")
+            for tender in (tenders or [])
+            if tender.get("tender_no")
+        )
+    elif kind == "draft":
+        st.session_state.pop(f"scan_result_draft_{university}", None)
+        st.session_state.pop(f"scan_result_draft_{university}_error", None)
     st.session_state["active_job"] = job.job_id
     st.session_state["active_university"] = university
     st.session_state["active_kind"] = kind
+    st.session_state["active_group"] = group
+    # The current run already evaluated "is a job active?" before this button was
+    # clicked, so without a rerun the page keeps showing the Scan button.
+    st.rerun()
     return True
 
 
+def _active_scope() -> str:
+    return str(st.session_state.get("active_university") or "diagnostic")
+
+
+def _render_log_expander(job_id: str) -> None:
+    job = _manager().get(job_id)
+    with st.expander("Job log", expanded=False):
+        st.code(job.log_tail() if job else "", language="text")
+
+
 @st.fragment(run_every=2)
-def _render_job(job_id: str, university: str, kind: str, result_key: str) -> None:
+def _render_active_log(job_id: str) -> None:
+    _render_log_expander(job_id)
+
+
+def _render_log_section(scope: str) -> None:
+    """Show the log only while a job is running.
+
+    Once the job finishes, the active job is cleared and the scan tables take over; the
+    log is intentionally not kept around underneath them.
+    """
+    active_id = _active_job_id()
+    if active_id and _active_scope() == scope:
+        _render_active_log(active_id)
+
+
+@st.fragment(run_every=2)
+def _render_job(
+    job_id: str,
+    university: str,
+    kind: str,
+    result_key: str,
+    show_progress: bool = True,
+) -> None:
     manager = _manager()
     state = manager.poll(job_id)
     status = str(state.get("status") or "unknown")
-    progress = state.get("progress") or {}
-    current = int(progress.get("current") or 0)
-    total = int(progress.get("total") or 0)
-    fraction = min(1.0, current / total) if total else 0.0
-    st.progress(
-        fraction,
-        text=f"{status} · {state.get('stage', '')} · {progress.get('message', '')}".strip(),
-    )
 
-    if status not in TERMINAL_STATUSES:
-        if st.button("Cancel job", key=f"cancel_{job_id}"):
-            manager.cancel(job_id)
-            st.rerun()
-
-    job = manager.get(job_id)
-    with st.expander("Job log", expanded=status not in TERMINAL_STATUSES):
-        st.code(job.log_tail() if job else "", language="text")
+    if show_progress:
+        progress = state.get("progress") or {}
+        current = int(progress.get("current") or 0)
+        total = int(progress.get("total") or 0)
+        fraction = min(1.0, current / total) if total else 0.0
+        st.progress(
+            fraction,
+            text=(
+                f"{status} · {state.get('stage', '')} · "
+                f"{progress.get('message', '')}"
+            ).strip(),
+        )
+        if status not in TERMINAL_STATUSES and kind not in ("scan", "download", "draft"):
+            if st.button("Cancel job", key=f"cancel_{job_id}"):
+                manager.cancel(job_id)
+                st.rerun()
 
     if status in TERMINAL_STATUSES:
         st.session_state[result_key] = state.get("result")
         st.session_state[f"{result_key}_error"] = state.get("error") or ""
         st.session_state.pop("active_job", None)
+        # Leaving these behind makes the next run believe a download/draft is still
+        # active, so it reads the wrong result key and the scan table disappears.
+        st.session_state.pop("active_kind", None)
+        st.session_state.pop("active_university", None)
+        st.session_state.pop("active_group", None)
         # Default rerun scope is "fragment" inside a fragment, which would re-render
         # this finished job instead of the results below it.
         st.rerun(scope="app")
 
 
 def _render_download_result(result: Optional[Dict], key: str) -> None:
-    if not result:
-        return
-    files = result.get("files") or []
-    zip_path = result.get("zip") or ""
-    st.success(f"Downloaded {len(files)} file(s).")
+    zip_path = (result or {}).get("zip") or ""
     if zip_path and Path(zip_path).is_file():
         with open(zip_path, "rb") as handle:
             st.download_button(
-                "Download documents (ZIP)",
+                "Download ZIP",
                 handle,
                 file_name=Path(zip_path).name,
                 key=f"zip_{key}",
+                type="primary",
             )
-    with st.expander("Files", expanded=False):
-        for path in files:
-            st.text(path)
+    else:
+        st.info("No documents were found for that selection.")
 
 
 def _render_draft_result(result: Optional[Dict], key: str) -> None:
@@ -205,13 +266,18 @@ def _render_draft_result(result: Optional[Dict], key: str) -> None:
 
 
 def _selection_table(tenders, key: str) -> List[str]:
+    """Tender selection grid.
+
+    The old Details column repeated "tender number — description", which forced the grid
+    wider than the page. The remaining columns use compact widths so the editor fits the
+    container without a horizontal scrollbar on a normal laptop.
+    """
     rows = [
         {
             "Select": False,
             "Tender": tender.tender_no,
             "Description": tender.description,
             "Closing": tender.closing_date,
-            "Details": row_label(tender),
         }
         for tender in tenders
     ]
@@ -221,16 +287,204 @@ def _selection_table(tenders, key: str) -> List[str]:
         hide_index=True,
         width="stretch",
         column_config={
-            "Select": st.column_config.CheckboxColumn("Select", default=False),
-            "Details": st.column_config.TextColumn("Details", width="large"),
+            "Select": st.column_config.CheckboxColumn(
+                "Select", default=False, width="small"
+            ),
+            "Tender": st.column_config.TextColumn("Tender", width="small"),
+            "Description": st.column_config.TextColumn("Description", width="medium"),
+            "Closing": st.column_config.TextColumn("Closing", width="small"),
         },
-        disabled=["Tender", "Description", "Closing", "Details"],
+        disabled=["Tender", "Description", "Closing"],
     )
     return [row["Tender"] for row in edited if row.get("Select")]
 
 
+def _render_draft_action(university: str, selected_open: List, busy: bool) -> None:
+    """The Gmail button that belongs directly under the open-tender table."""
+    if not selected_open:
+        st.info("Tick one or more open tenders to create drafts.")
+        return
+
+    draftable = draftable_tenders(selected_open)
+    skipped = skipped_for_missing_email(selected_open)
+    if skipped:
+        st.warning("No contact email, will be skipped: " + ", ".join(skipped))
+    if not draftable:
+        st.info("No selected tender has a contact email to draft to.")
+        return
+
+    if not _certificate_ready():
+        # No attachment means no draft: stop here rather than creating a draft whose
+        # body promises a certificate it does not carry.
+        st.warning(
+            "Attach the BR certificate first. Use **Documents → Upload BR certificate** "
+            "in the sidebar; the draft button appears once it is saved."
+        )
+        return
+
+    sample = draftable[0]
+    draft = generate_tender_email(
+        tender_no=sample.tender_no,
+        description=sample.description,
+        recipient_name=sample.contact_person,
+        recipient_email=sample.contact_email,
+    )
+    st.caption(f"{len(draftable)} draftable open tender(s) selected.")
+    with st.expander("Draft preview (first selected tender)"):
+        st.text(f"To: {draft.recipient_email}")
+        st.text(f"Subject: {draft.subject}")
+        st.text(draft.body)
+
+    if st.button(
+        f"Create {len(draftable)} Gmail draft(s)",
+        key=f"draft_{university}",
+        disabled=busy,
+    ):
+        _start_job(
+            "draft",
+            university,
+            tenders=tenders_to_payloads(draftable),
+        )
+
+
+def _render_process_action(
+    university: str, selected: List, busy: bool, group: str = ""
+) -> None:
+    """The EOI/download control for one CUHK/CityU table.
+
+    Same one-control flow as HKUST: Fetch → Fetching… → Download ZIP. Each table gets
+    its own group so its package and button state are independent.
+    """
+    suffix = f"_{group}" if group else ""
+    key = f"scan_result_download_{university}{suffix}"
+    error = st.session_state.pop(f"{key}_error", None)
+    if error:
+        st.error(error)
+
+    if _download_active(university, group):
+        _render_fetch_progress(_active_job_id())
+        st.button(
+            "Fetching…", key=f"fetching_{university}{suffix}", disabled=True
+        )
+        return
+
+    selected_refs = sorted(tender.tender_no for tender in selected)
+    fetched_refs = st.session_state.get(f"fetched_refs_{university}{suffix}") or []
+    result = st.session_state.get(key)
+    zip_path = (result or {}).get("zip") or ""
+    if result and fetched_refs == selected_refs and zip_path and Path(zip_path).is_file():
+        _render_download_result(result, key)
+        return
+    if result and fetched_refs == selected_refs:
+        st.info("No documents were found for that selection.")
+
+    candidates = eoi_candidates(selected)
+    if candidates:
+        confirmed = st.checkbox(
+            f"I understand an Expression of Interest will be submitted for "
+            f"{len(candidates)} tender(s).",
+            key=f"eoi_confirm_{university}{suffix}",
+        )
+        disabled = busy or not selected or not confirmed
+    else:
+        disabled = busy or not selected
+
+    st.caption(
+        f"{len(selected)} tender(s) selected · {len(candidates)} need EOI submitted."
+    )
+    if candidates:
+        label = f"Submit EOI & Fetch Documents ({len(selected)})"
+    elif selected:
+        label = f"Fetch Documents ({len(selected)})"
+    else:
+        label = "Fetch Documents"
+    if st.button(
+        label,
+        key=f"process_{university}{suffix}",
+        disabled=disabled,
+    ):
+        _start_job(
+            "download",
+            university,
+            tenders=tenders_to_payloads(selected),
+            group=group,
+        )
+
+
+def _download_active(university: str, group: str = "") -> bool:
+    return (
+        bool(_active_job_id())
+        and st.session_state.get("active_university") == university
+        and st.session_state.get("active_kind") == "download"
+        and str(st.session_state.get("active_group") or "") == group
+    )
+
+
+@st.fragment(run_every=2)
+def _render_fetch_progress(job_id: str) -> None:
+    """The download progress lives under its own table, not on a separate screen."""
+    state = _manager().poll(job_id)
+    progress = state.get("progress") or {}
+    current = int(progress.get("current") or 0)
+    total = int(progress.get("total") or 0)
+    fraction = min(1.0, current / total) if total else 0.0
+    st.progress(
+        fraction,
+        text=str(progress.get("message") or state.get("stage") or "Fetching documents…"),
+    )
+
+
+def _render_fetch_action(
+    university: str, selected: List, busy: bool, group: str = ""
+) -> None:
+    """One control in one place: Fetch → Fetching… → Download ZIP."""
+    suffix = f"_{group}" if group else ""
+    key = f"scan_result_download_{university}{suffix}"
+    error = st.session_state.pop(f"{key}_error", None)
+    if error:
+        st.error(error)
+
+    if _download_active(university, group):
+        _render_fetch_progress(_active_job_id())
+        st.button(
+            "Fetching…", key=f"fetching_{university}{suffix}", disabled=True
+        )
+        return
+
+    selected_refs = sorted(tender.tender_no for tender in selected)
+    fetched_refs = st.session_state.get(f"fetched_refs_{university}{suffix}") or []
+    result = st.session_state.get(key)
+    zip_path = (result or {}).get("zip") or ""
+    if result and fetched_refs == selected_refs and zip_path and Path(zip_path).is_file():
+        _render_download_result(result, key)
+        return
+
+    if result and fetched_refs == selected_refs:
+        st.info("No documents were found for that selection.")
+
+    if st.button(
+        "Fetch Documents",
+        key=f"fetch_{university}{suffix}",
+        disabled=busy or not selected,
+    ):
+        _start_job(
+            "download",
+            university,
+            tenders=tenders_to_payloads(selected),
+            group=group,
+        )
+
+
+def _render_inline_draft(university: str) -> None:
+    key = f"scan_result_draft_{university}"
+    if st.session_state.get(key):
+        _render_draft_result(st.session_state[key], key)
+    error = st.session_state.pop(f"{key}_error", None)
+    if error:
+        st.error(error)
+
+
 def _render_scan_result(university: str, result: Dict) -> None:
-    label = UNIVERSITIES[university]
     tenders = tenders_from_payloads(result.get("tenders") or [])
     if not tenders:
         st.info("No active tenders were found.")
@@ -242,95 +496,31 @@ def _render_scan_result(university: str, result: Dict) -> None:
         f"{len(tenders)} tender(s) · {len(invited)} invitation(s) · "
         f"{len(open_tenders)} open · {handled} handled reference(s) hidden"
     )
+    busy = bool(_active_job_id())
+    invited_selected: List = []
 
-    selected_refs: List[str] = []
     if invited:
         st.markdown("**My Tender Invitation / Interested Tender(s)**")
-        selected_refs += _selection_table(invited, f"select_{university}_invited")
+        invited_selected = selected_tenders(
+            invited, _selection_table(invited, f"select_{university}_invited")
+        )
+        if university == "hkust":
+            _render_fetch_action(university, invited_selected, busy)
+        else:
+            _render_process_action(
+                university, invited_selected, busy, group="invited"
+            )
+
     if open_tenders:
         st.markdown("**Tender Notice**")
-        selected_refs += _selection_table(open_tenders, f"select_{university}_open")
-
-    selected = selected_tenders(tenders, selected_refs)
-    if not selected:
-        st.info("Tick the tenders you want to act on.")
-        return
-
-    selected_invited = [tender for tender in selected if tender.invited]
-    selected_open = [tender for tender in selected if not tender.invited]
-    busy = bool(_active_job_id())
-
-    if university == "hkust":
-        if selected_invited:
-            st.caption(f"{len(selected_invited)} invited tender(s) selected.")
-            if st.button(
-                "Download documents for selected invitations",
-                key=f"download_{university}",
-                disabled=busy,
-            ):
-                _start_job(
-                    "download",
-                    university,
-                    tenders=tenders_to_payloads(selected_invited),
-                )
-
-        if selected_open:
-            draftable = draftable_tenders(selected_open)
-            skipped = skipped_for_missing_email(selected_open)
-            certificate_ready = _certificate_ready()
-            st.caption(f"{len(draftable)} draftable open tender(s) selected.")
-            if not certificate_ready:
-                st.warning(
-                    "Upload the BR certificate in the sidebar before creating drafts."
-                )
-            if skipped:
-                st.warning("No contact email, will be skipped: " + ", ".join(skipped))
-            if draftable:
-                sample = draftable[0]
-                draft = generate_tender_email(
-                    tender_no=sample.tender_no,
-                    description=sample.description,
-                    recipient_name=sample.contact_person,
-                    recipient_email=sample.contact_email,
-                )
-                with st.expander("Draft preview (first selected tender)"):
-                    st.text(f"To: {draft.recipient_email}")
-                    st.text(f"Subject: {draft.subject}")
-                    st.text(draft.body)
-                if st.button(
-                    f"Create {len(draftable)} Gmail draft(s)",
-                    key=f"draft_{university}",
-                    disabled=busy or not certificate_ready,
-                ):
-                    _start_job(
-                        "draft",
-                        university,
-                        tenders=tenders_to_payloads(draftable),
-                    )
-    else:
-        candidates = eoi_candidates(selected)
-        if candidates:
-            confirmed = st.checkbox(
-                f"I understand an Expression of Interest will be submitted for "
-                f"{len(candidates)} tender(s).",
-                key=f"eoi_confirm_{university}",
-            )
-            disabled = busy or not confirmed
-        else:
-            disabled = busy
-        st.caption(
-            f"{len(selected)} tender(s) selected · {len(candidates)} need EOI submitted."
+        open_selected = selected_tenders(
+            open_tenders, _selection_table(open_tenders, f"select_{university}_open")
         )
-        if st.button(
-            f"Submit EOI where needed and download {len(selected)} tender(s)",
-            key=f"process_{university}",
-            disabled=disabled,
-        ):
-            _start_job(
-                "download",
-                university,
-                tenders=tenders_to_payloads(selected),
-            )
+        if university == "hkust":
+            _render_draft_action(university, open_selected, busy)
+            _render_inline_draft(university)
+        else:
+            _render_process_action(university, open_selected, busy, group="open")
 
 
 def _render_portal(university: str) -> None:
@@ -355,54 +545,82 @@ def _render_portal(university: str) -> None:
             return
         options = {}
 
-    if st.button(f"Scan {label} tenders", key=f"scan_{university}", disabled=busy):
-        _start_job("scan", university, options=options)
-
-    active_kind = str(st.session_state.get("active_kind") or "")
-    result_key = {
-        "scan": f"scan_result_{university}",
-        "download": f"download_result_{university}",
-        "draft": f"draft_result_{university}",
-    }.get(active_kind, f"scan_result_{university}")
     active_for_tab = (
-        _active_job_id()
+        bool(_active_job_id())
         and st.session_state.get("active_university") == university
     )
+    active_kind = str(st.session_state.get("active_kind") or "")
+    scanning_here = active_for_tab and active_kind == "scan"
+
+    if scanning_here:
+        state = _manager().poll(_active_job_id())
+        stopping = str(state.get("status") or "") == "cancelling"
+        if st.button(
+            "Stopping..." if stopping else "Stop",
+            key=f"stop_{university}",
+            disabled=stopping,
+        ):
+            _manager().cancel(_active_job_id())
+            st.rerun()
+    else:
+        if st.button(f"Scan {label} tenders", key=f"scan_{university}", disabled=busy):
+            _start_job("scan", university, options=options)
+
+    scan_key = f"scan_result_{university}"
     if active_for_tab:
+        # The job's own result key; the scan table is separate and must stay visible
+        # while a download/draft runs.
+        active_group = str(st.session_state.get("active_group") or "")
+        suffix = f"_{active_group}" if active_group else ""
+        if active_kind == "download":
+            active_result_key = f"download_result_{university}{suffix}"
+        elif active_kind == "draft":
+            active_result_key = f"draft_result_{university}"
+        else:
+            active_result_key = scan_key
         _render_job(
             _active_job_id(),
             university,
             active_kind,
-            result_key,
+            active_result_key,
+            show_progress=(active_kind == "scan"),
         )
 
-    error_key = f"{result_key}_error"
+    error_key = f"{scan_key}_error"
     if st.session_state.get(error_key):
         st.error(st.session_state[error_key])
         st.session_state.pop(error_key, None)
 
-    result = st.session_state.get(result_key)
+    # Results of jobs started from this tab are stored under kind-specific keys by the
+    # fragment callback. Move them next to the table that produced them before rendering,
+    # so the first post-job run already shows Download ZIP instead of Fetch.
+    for group in ("", "invited", "open"):
+        suffix = f"_{group}" if group else ""
+        _consume_action_result(
+            university,
+            "download",
+            f"scan_result_download_{university}{suffix}",
+            group=group,
+        )
+    _consume_action_result(university, "draft", f"scan_result_draft_{university}")
+
+    result = st.session_state.get(scan_key)
     if result:
         _render_scan_result(university, result)
 
-    scan_download_key = f"scan_result_download_{university}"
-    if st.session_state.get(scan_download_key):
-        _render_download_result(st.session_state[scan_download_key], scan_download_key)
-
-    scan_draft_key = f"scan_result_draft_{university}"
-    if st.session_state.get(scan_draft_key):
-        _render_draft_result(st.session_state[scan_draft_key], scan_draft_key)
-
-    # Results of jobs started from this tab are stored under kind-specific keys by the
-    # fragment callback, so read them once they appear.
-    _consume_action_result(university, "download", scan_download_key)
-    _consume_action_result(university, "draft", scan_draft_key)
+    _render_log_section(university)
 
 
-def _consume_action_result(university: str, kind: str, target_key: str) -> None:
-    source = f"{kind}_result_{university}"
+def _consume_action_result(
+    university: str, kind: str, target_key: str, group: str = ""
+) -> None:
+    suffix = f"_{group}" if group else ""
+    source = f"{kind}_result_{university}{suffix}"
     if st.session_state.get(source):
         st.session_state[target_key] = st.session_state.pop(source)
+        error = st.session_state.pop(f"{source}_error", None)
+        if error:
+            st.session_state[f"{target_key}_error"] = error
         st.rerun()
 
 
@@ -435,6 +653,8 @@ def _render_diagnostics() -> None:
         st.error(error)
         st.session_state.pop("diagnostic_result_error", None)
 
+    _render_log_section("diagnostic")
+
 
 def render_app(auth: AuthResult) -> None:
     st.session_state["auth_name"] = auth.name or auth.username
@@ -449,7 +669,6 @@ def render_app(auth: AuthResult) -> None:
         "Streamlit Cloud storage is temporary. Download the ZIP after each job; "
         "files disappear when the app restarts."
     )
-    st.sidebar.caption(f"Workspace: {_workspace()}")
 
     _manager().cleanup()
 

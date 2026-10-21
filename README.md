@@ -272,10 +272,11 @@ upload the BR certificate from the sidebar after signing in; it lasts for that r
 The Business Registration PDF is not committed (`.gitignore` covers `assets/*.pdf`), so a
 hosted deployment receives it at runtime.
 
-**Upload it in the app (default flow).** After signing in, use **Upload BR certificate
-(PDF)** in the sidebar. The file is validated, written to
-`$RUNTIME_DIR/assets/br_certificate.pdf`, and used by every Gmail draft created in that
-runtime. The draft buttons stay disabled until a certificate is present.
+**Upload it in the app (default flow).** After signing in, select the PDF in **Upload BR
+certificate (PDF)** in the sidebar; it is attached immediately (there is no submit
+button). The file is validated, written to `$RUNTIME_DIR/assets/br_certificate.pdf`, and
+used by every Gmail draft created in that runtime. The draft button stays hidden until a
+certificate is present.
 
 Community Cloud has no persistent disk: the upload disappears when the app restarts,
 redeploys or wakes from sleep, so upload it again. The CLI (and a local Streamlit run) can
