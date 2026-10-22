@@ -20,6 +20,7 @@ from scraper import sessions
 from scraper.CityU.documents import process_cityu_tenders
 from scraper.CUHK.documents import process_cuhk_tenders
 from scraper.HKUST.documents import download_tender_documents
+from web.gemini import build_gemini_prompt, document_paths
 from web.serialize import tenders_from_payloads, tenders_to_payloads
 from web.zip_utils import zip_directory
 
@@ -144,10 +145,21 @@ def run_download(request: Dict[str, Any], reporter) -> Dict[str, Any]:
 
     archive = zip_directory(dest_root, workspace / f"{label.lower()}-documents.zip")
     reporter.log(f"[OK] Downloaded {len(saved)} file(s).")
-    return {
+    result = {
         "files": [str(path.relative_to(workspace)) for path in saved],
         "zip": str(archive) if archive else "",
     }
+
+    # Only HKUST invitations carry forms worth sending to Gemini. The prompt is a bonus:
+    # a failure here must never turn a successful download into a failed job.
+    if university == "hkust" and saved:
+        try:
+            prompt = build_gemini_prompt(tenders, document_paths(saved, dest_root))
+            result["gemini"] = {"prompt": prompt}
+        except Exception as exc:  # noqa: BLE001 - the download already succeeded
+            reporter.log(f"[!] Gemini prompt not built: {type(exc).__name__}: {exc}")
+
+    return result
 
 
 def run_draft(request: Dict[str, Any], reporter) -> Dict[str, Any]:
