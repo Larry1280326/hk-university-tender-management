@@ -12,6 +12,7 @@ from mailer.template import generate_tender_email
 from web.auth import AuthResult
 from web.bootstrap import certificate_fingerprint
 from web.downloads import download_mime, downloadable_files
+from web.gemini import GEMINI_EXTENSION_URL
 from web.gemini_bridge import BRIDGE_HEIGHT, render_gemini_bridge
 from web.jobs import JobError, JobManager, TERMINAL_STATUSES
 from web.select_logic import (
@@ -139,6 +140,8 @@ def _start_job(
         st.session_state.pop(f"fetched_refs_{university}_project", None)
         st.session_state.pop(f"scan_result_download_{university}_project", None)
         st.session_state.pop(f"scan_result_download_{university}_project_error", None)
+        st.session_state.pop(f"scan_result_download_{university}_open", None)
+        st.session_state.pop(f"scan_result_download_{university}_open_error", None)
         for group in ("invited", "open"):
             prefix = f"select_{university}_{group}"
             for key in list(st.session_state.keys()):
@@ -485,11 +488,12 @@ def _render_draft_action(university: str, selected_open: List, busy: bool) -> No
 def _render_process_action(
     university: str, selected: List, busy: bool, group: str = ""
 ) -> None:
-    """The EOI/download control for one CUHK/CityU open-tender table.
+    """The EOI control under one CUHK/CityU open-tender table.
 
-    Fetch → Fetching… → Download ZIP. Each table gets its own group so its package and
-    button state are independent. Invitation projects use ``_render_fetch_action``
-    instead, one project at a time.
+    Submitting the Expression of Interest is the whole step. The tender then appears
+    under My Tender Invitation, where the project screen fetches its documents and
+    offers them one by one. The Tender Notice table no longer downloads or builds a
+    ZIP. Invitation projects use ``_render_fetch_action`` instead.
     """
     suffix = f"_{group}" if group else ""
     key = f"scan_result_download_{university}{suffix}"
@@ -500,21 +504,19 @@ def _render_process_action(
     if _download_active(university, group):
         _render_fetch_progress(_active_job_id())
         st.button(
-            "Fetching…", key=f"fetching_{university}{suffix}", disabled=True
+            "Submitting EOI…", key=f"fetching_{university}{suffix}", disabled=True
         )
         return
 
-    selected_refs = sorted(tender.tender_no for tender in selected)
-    fetched_refs = st.session_state.get(f"fetched_refs_{university}{suffix}") or []
-    result = st.session_state.get(key)
-    zip_path = (result or {}).get("zip") or ""
-    if result and fetched_refs == selected_refs and zip_path and Path(zip_path).is_file():
-        _render_download_result(result, key)
-        return
-    if result and fetched_refs == selected_refs:
-        st.info("No documents were found for that selection.")
-
     candidates = eoi_candidates(selected)
+    if selected and not candidates:
+        # A stale scan can list a tender whose EOI is already in; refreshing is the only
+        # way to learn the truth, so do not offer a button that would do nothing.
+        st.info(
+            "No selected tender needs an EOI. Run the scan again to refresh the list."
+        )
+        return
+
     if candidates:
         confirmed = st.checkbox(
             f"I understand an Expression of Interest will be submitted for "
@@ -528,12 +530,7 @@ def _render_process_action(
     st.caption(
         f"{len(selected)} tender(s) selected · {len(candidates)} need EOI submitted."
     )
-    if candidates:
-        label = f"Submit EOI & Fetch Documents ({len(selected)})"
-    elif selected:
-        label = f"Fetch Documents ({len(selected)})"
-    else:
-        label = "Fetch Documents"
+    label = f"Submit EOI ({len(selected)})" if selected else "Submit EOI"
     if st.button(
         label,
         key=f"process_{university}{suffix}",
@@ -542,6 +539,7 @@ def _render_process_action(
         _start_job(
             "download",
             university,
+            options={"eoi_only": True},
             tenders=tenders_to_payloads(selected),
             group=group,
         )
@@ -643,6 +641,35 @@ def _render_inline_draft(university: str) -> None:
         st.error(error)
 
 
+def _apply_eoi_result(university: str, result: Dict) -> List[str]:
+    """Move tenders whose EOI just went through into the invitation table.
+
+    The open-tender job only submits the EOI; its documents are fetched later from the
+    invitation project screen. Payloads are updated in place so both tables redraw
+    without another portal scan. Returns the references that were submitted.
+    """
+    outcome = st.session_state.get(f"scan_result_download_{university}_open") or {}
+    submitted = [str(ref) for ref in outcome.get("eoi_submitted") or []]
+    if not submitted:
+        return []
+
+    wanted = set(submitted)
+    moved = False
+    for payload in result.get("tenders") or []:
+        if payload.get("tender_no") in wanted and not payload.get("invited"):
+            payload["invited"] = True
+            payload["needs_eoi"] = False
+            moved = True
+
+    if moved:
+        # The rows the editor was tracking are now in the other table, so its tick
+        # state would point at the wrong row.
+        st.session_state.pop(f"select_{university}_open", None)
+        st.session_state.pop(f"eoi_confirm_{university}_open", None)
+        st.rerun()
+    return submitted
+
+
 def _render_scan_result(
     university: str, result: Dict, *, hide_handled: Optional[bool] = None
 ) -> None:
@@ -651,7 +678,14 @@ def _render_scan_result(
         st.info("No active tenders were found.")
         return
 
+    submitted = _apply_eoi_result(university, result)
     invited, open_tenders = split_groups(tenders)
+    if submitted:
+        st.success(
+            f"Expression of Interest submitted for {len(submitted)} tender(s). "
+            "They now appear under My Tender Invitation; open a project to fetch "
+            "its documents."
+        )
     # Only rows this scan removed count as hidden; Gmail may know far more references.
     handled = int(result.get("handled_count") or 0)
     scanned_hide = result.get("hide_handled")
@@ -916,6 +950,7 @@ def render_app(auth: AuthResult) -> None:
         "Streamlit Cloud storage is temporary. Download the files after each job; "
         "they disappear when the app restarts."
     )
+    st.sidebar.link_button("Get Send to Gemini extension", GEMINI_EXTENSION_URL)
 
     _manager().cleanup()
 

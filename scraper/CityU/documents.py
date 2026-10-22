@@ -9,7 +9,7 @@ forms, and query responses.
 
 import re
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import Callable, List, Optional, Set
 from urllib.parse import urljoin
 
 from playwright.sync_api import Error as PlaywrightError
@@ -186,11 +186,24 @@ def _download_one_cityu(
     return saved
 
 
+def _submit_eoi_only(page: Page, tender: TenderNotice, *, log=print) -> None:
+    """Open one CityU tender and submit its EOI, without downloading anything."""
+    if not tender.portal_id:
+        raise LookupError(f"{tender.tender_no} is missing its ETS portal_id")
+
+    view_url = _view_url_for_tender(tender)
+    _open_view_page(page, view_url, tender.portal_id)
+    if tender.needs_eoi:
+        _submit_eoi_if_needed(page, tender, view_url, log=log)
+
+
 def process_cityu_tenders(
     page: Page,
     tenders: List[TenderNotice],
     dest_root: Optional[Path] = None,
     *,
+    eoi_only: bool = False,
+    on_eoi: Optional[Callable[[str], None]] = None,
     log=print,
     progress_callback=None,
     error_callback=None,
@@ -199,6 +212,10 @@ def process_cityu_tenders(
 
     Defaults ``dest_root`` to ``config.DOCUMENT_DIR / "CityU"``.
     A failure on one tender is reported and skipped rather than aborting the rest.
+
+    ``eoi_only`` submits the Expression of Interest and stops there: the tender then
+    moves into My Tender Invitation, where the project screen downloads its files one
+    by one. ``on_eoi`` receives each tender number whose EOI went through.
     """
     dest_root = Path(dest_root or (config.DOCUMENT_DIR / "CityU"))
     saved: List[Path] = []
@@ -207,6 +224,11 @@ def process_cityu_tenders(
         if progress_callback:
             progress_callback(index, total, tender.tender_no)
         try:
+            if eoi_only:
+                _submit_eoi_only(page, tender, log=log)
+                if on_eoi:
+                    on_eoi(tender.tender_no)
+                continue
             saved.extend(_download_one_cityu(page, tender, dest_root, log=log))
         except (PlaywrightTimeoutError, PlaywrightError, LookupError) as e:
             message = (

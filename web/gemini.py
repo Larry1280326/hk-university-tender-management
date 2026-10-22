@@ -18,6 +18,7 @@ from scraper.models import TenderNotice
 from scraper.paths import tender_dir_name
 
 GEMINI_EXTENSION_ID = "gklmoobnblcdiglifjmdilofgndghmml"
+GEMINI_EXTENSION_URL = f"https://chromewebstore.google.com/detail/{GEMINI_EXTENSION_ID}"
 
 # The Gemini skill that carries the form-filling instructions.
 GEMINI_SKILL = "@pdf-form-filler"

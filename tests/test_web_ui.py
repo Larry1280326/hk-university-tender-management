@@ -242,6 +242,65 @@ class TestInvitationScreens(_UiTestCase):
         rerun.assert_called_once()
 
 
+class TestOpenTenderEOI(_UiTestCase):
+
+    def test_the_open_table_submits_an_eoi_only(self):
+        tender = _tender(invited=False, needs_eoi=True)
+
+        with patch.object(self.ui.st, "session_state", {}), patch.object(
+            self.ui.st, "checkbox", return_value=True
+        ), patch.object(self.ui.st, "button", return_value=True), patch.object(
+            self.ui.st, "caption"
+        ), patch.object(
+            self.ui, "_active_job_id", return_value=""
+        ), patch.object(
+            self.ui, "_start_job"
+        ) as start:
+            self.ui._render_process_action("cuhk", [tender], False, group="open")
+
+        args, kwargs = start.call_args
+        self.assertEqual(args, ("download", "cuhk"))
+        self.assertEqual(kwargs["options"], {"eoi_only": True})
+        self.assertEqual(kwargs["group"], "open")
+
+    def test_the_eoi_button_needs_the_confirmation(self):
+        tender = _tender(invited=False, needs_eoi=True)
+
+        with patch.object(self.ui.st, "session_state", {}), patch.object(
+            self.ui.st, "checkbox", return_value=False
+        ), patch.object(self.ui.st, "button") as button, patch.object(
+            self.ui.st, "caption"
+        ), patch.object(
+            self.ui, "_active_job_id", return_value=""
+        ):
+            self.ui._render_process_action("cuhk", [tender], False, group="open")
+
+        self.assertEqual(button.call_args.args[0], "Submit EOI (1)")
+        self.assertTrue(button.call_args.kwargs["disabled"])
+
+    def test_an_eoi_result_moves_the_tender_into_invitations(self):
+        result = {"tenders": tenders_to_payloads([
+            _tender(tender_no="T-1", invited=False, needs_eoi=True)
+        ])}
+        state = {
+            "scan_result_download_cuhk_open": {"eoi_submitted": ["T-1"]},
+            "select_cuhk_open": {0: {"Select": True}},
+            "eoi_confirm_cuhk_open": True,
+        }
+
+        with patch.object(self.ui.st, "session_state", state), patch.object(
+            self.ui.st, "rerun"
+        ) as rerun:
+            submitted = self.ui._apply_eoi_result("cuhk", result)
+
+        self.assertEqual(submitted, ["T-1"])
+        self.assertTrue(result["tenders"][0]["invited"])
+        self.assertFalse(result["tenders"][0]["needs_eoi"])
+        self.assertNotIn("select_cuhk_open", state)
+        self.assertNotIn("eoi_confirm_cuhk_open", state)
+        rerun.assert_called_once()
+
+
 class TestScanCleanup(_UiTestCase):
 
     def test_a_scan_clears_only_its_own_project_state(self):
@@ -251,6 +310,7 @@ class TestScanCleanup(_UiTestCase):
             "fetched_refs_cuhk_project": ["P1"],
             "scan_result_download_cuhk_project": {"zip": "x"},
             "scan_result_download_cuhk_project_error": "boom",
+            "scan_result_download_cuhk_open": {"eoi_submitted": ["T-1"]},
             "hkust_invitation_ref": "H1",
             "scan_result_hkust": {"tenders": []},
         }
@@ -270,6 +330,7 @@ class TestScanCleanup(_UiTestCase):
             "fetched_refs_cuhk_project",
             "scan_result_download_cuhk_project",
             "scan_result_download_cuhk_project_error",
+            "scan_result_download_cuhk_open",
         ):
             self.assertNotIn(key, state)
         self.assertEqual(state["hkust_invitation_ref"], "H1")

@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import config
 from mailer.google_account import GoogleAccountMailer
@@ -133,22 +133,37 @@ def run_download(request: Dict[str, Any], reporter) -> Dict[str, Any]:
     dest_root = workspace / "documents" / label
     dest_root.mkdir(parents=True, exist_ok=True)
 
+    options = request.get("options") or {}
+    # HKUST open tenders draft an email; CUHK and CityU submit an EOI. The EOI is the
+    # whole step: its documents are fetched later from the invitation project screen.
+    eoi_only = bool(options.get("eoi_only")) and university != "hkust"
+    submitted: List[str] = []
+
     _ensure_chromium(reporter)
-    reporter.update(
-        stage=f"downloading documents for {len(tenders)} tender(s)", force=True
-    )
+    if eoi_only:
+        stage = f"submitting Expression of Interest for {len(tenders)} tender(s)"
+    else:
+        stage = f"downloading documents for {len(tenders)} tender(s)"
+    reporter.update(stage=stage, force=True)
     with SESSION_FACTORIES[university](headless=True, log=reporter.log) as (page, _parser):
+        extra = {"eoi_only": True, "on_eoi": submitted.append} if eoi_only else {}
         saved = DOWNLOADERS[university](
             page,
             tenders,
             dest_root,
             log=reporter.log,
             progress_callback=reporter.progress,
+            **extra,
         )
+
+    if eoi_only:
+        reporter.log(
+            f"[OK] Submitted Expression of Interest for {len(submitted)} tender(s)."
+        )
+        return {"files": [], "zip": "", "eoi_submitted": submitted}
 
     # An invitation project is downloaded on its own and offered file by file, so there
     # is nothing to zip. Open-tender downloads keep their single archive.
-    options = request.get("options") or {}
     archive = None
     if options.get("archive", True):
         archive = zip_directory(

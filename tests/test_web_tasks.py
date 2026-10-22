@@ -1,10 +1,13 @@
-"""Tests for the scan job gateway, especially the Gmail filter caption."""
+"""Tests for the job gateway, especially the Gmail filter caption and EOI handoff."""
 
+import tempfile
 import unittest
 from contextlib import contextmanager
 from unittest.mock import patch
 
+from scraper.models import TenderNotice
 from web import tasks
+from web.serialize import tenders_to_payloads
 
 
 class _FakeReporter:
@@ -56,6 +59,60 @@ class TestRunScan(unittest.TestCase):
             result = self.scan("hkust", {"hide_handled": True})
 
         self.assertIs(result["hide_handled"], True)
+
+
+class TestRunDownload(unittest.TestCase):
+
+    def test_eoi_only_reports_the_submitted_tenders_and_skips_the_zip(self):
+        tender = TenderNotice(
+            tender_no="T-20260425",
+            description="Student Common Room Renovation",
+            closing_date="20-Nov-2026 12:00:00",
+            contact_person="Miss CHAN",
+            contact_email="tender@cuhk.edu.hk",
+            invited=False,
+            needs_eoi=True,
+            portal_id="123",
+        )
+        seen = {}
+
+        def downloader(
+            page,
+            tenders,
+            dest_root,
+            *,
+            eoi_only=False,
+            on_eoi=None,
+            log=None,
+            progress_callback=None,
+        ):
+            seen["eoi_only"] = eoi_only
+            seen["refs"] = [item.tender_no for item in tenders]
+            on_eoi(tenders[0].tender_no)
+            return []
+
+        with tempfile.TemporaryDirectory() as workspace, patch.object(
+            tasks, "_ensure_chromium"
+        ), patch.dict(
+            tasks.SESSION_FACTORIES, {"cuhk": _fake_session}
+        ), patch.dict(
+            tasks.DOWNLOADERS, {"cuhk": downloader}
+        ):
+            result = tasks.run_download(
+                {
+                    "university": "cuhk",
+                    "workspace": workspace,
+                    "options": {"eoi_only": True},
+                    "tenders": tenders_to_payloads([tender]),
+                },
+                _FakeReporter(),
+            )
+
+        self.assertTrue(seen["eoi_only"])
+        self.assertEqual(seen["refs"], ["T-20260425"])
+        self.assertEqual(
+            result, {"files": [], "zip": "", "eoi_submitted": ["T-20260425"]}
+        )
 
 
 if __name__ == "__main__":

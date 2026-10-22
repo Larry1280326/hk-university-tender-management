@@ -280,9 +280,11 @@ lists the university, the tender number and description, the closing date, the p
 contact, and the downloaded files. The instructions for filling the forms live in that
 skill, so the same prompt works for every project.
 
-Open tenders are unchanged: HKUST creates Gmail drafts, while CUHK and CityU keep their
-multi-select table, EOI confirmation, and single ZIP download. Open-tender downloads do
-not show Gemini.
+Open tenders keep their own flow: HKUST creates Gmail drafts, while CUHK and CityU
+multi-select and submit an EOI. Submitting is the whole step — the job does not download
+anything or build a ZIP. The tender then moves straight into **My Tender Invitation** in
+the same session, where the per-project screen gives the same per-file downloads and
+Gemini prompt as an invitation.
 
 The app never calls the Gemini API, so the documents are not sent to Google by the
 server. Pressing the button:
@@ -301,7 +303,9 @@ extension itself. Static serving is enabled in `.streamlit/config.toml` for this
 
 The extension is third-party, closed-source, and may be blocked by a managed Chrome. When
 it is missing or disabled, the bridge tab says so and the prompt can still be copied from
-the **Gemini prompt** expander and pasted into Gemini manually.
+the **Gemini prompt** expander and pasted into Gemini manually. The sidebar links to the
+extension's Chrome Web Store page, under the storage warning, so users can install it
+without hunting for it.
 
 ### BR certificate
 
