@@ -188,11 +188,12 @@ def _fake_session(*args, **kwargs):
     yield (object(), object())
 
 
-def _download_request(university, workspace, tenders):
+def _download_request(university, workspace, tenders, options=None):
     from web.serialize import tenders_to_payloads
 
     return {
         "university": university,
+        "options": options or {},
         "tenders": tenders_to_payloads(tenders),
         "workspace": str(workspace),
     }
@@ -206,7 +207,9 @@ class TestDownloadIntegration(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         return Path(self.tmp.name)
 
-    def run_download(self, university, workspace, downloader=_fake_downloader):
+    def run_download(
+        self, university, workspace, downloader=_fake_downloader, options=None
+    ):
         from web import tasks
 
         reporter = _FakeReporter()
@@ -214,7 +217,8 @@ class TestDownloadIntegration(unittest.TestCase):
             tasks.SESSION_FACTORIES, {university: _fake_session}
         ), patch.dict(tasks.DOWNLOADERS, {university: downloader}):
             result = tasks.run_download(
-                _download_request(university, workspace, [invitation()]), reporter
+                _download_request(university, workspace, [invitation()], options),
+                reporter,
             )
         return result, reporter
 
@@ -226,6 +230,18 @@ class TestDownloadIntegration(unittest.TestCase):
         self.assertIn("TNG2600120 EOI", result["gemini"]["prompt"])
         self.assertIn("HKUST/", result["gemini"]["prompt"])
         self.assertNotIn("pack", result["gemini"])
+
+    def test_a_project_download_can_skip_the_zip(self):
+        workspace = self.workspace()
+        result, _ = self.run_download(
+            "hkust", workspace, options={"archive": False}
+        )
+
+        self.assertEqual(result["zip"], "")
+        self.assertTrue(result["files"])
+        for relative in result["files"]:
+            self.assertTrue((workspace / relative).is_file(), relative)
+        self.assertIn("TNG2600120 EOI", result["gemini"]["prompt"])
 
     def test_other_universities_get_no_gemini_component(self):
         result, _ = self.run_download("cuhk", self.workspace())

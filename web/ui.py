@@ -11,6 +11,7 @@ import config
 from mailer.template import generate_tender_email
 from web.auth import AuthResult
 from web.bootstrap import certificate_fingerprint
+from web.downloads import download_mime, downloadable_files
 from web.gemini_bridge import BRIDGE_HEIGHT, render_gemini_bridge
 from web.jobs import JobError, JobManager, TERMINAL_STATUSES
 from web.select_logic import (
@@ -130,9 +131,11 @@ def _start_job(
         st.error(str(exc))
         return False
     if kind == "scan":
-        # A fresh scan must not inherit ticks from the previous list. The row keys carry
-        # an index and tender number, so clear the whole prefix.
+        # A fresh scan must not leave the previous list on screen, including a project
+        # screen opened from it.
         st.session_state.pop(f"scan_result_{university}", None)
+        if university == "hkust":
+            st.session_state.pop("hkust_invitation_ref", None)
         for group in ("invited", "open"):
             prefix = f"select_{university}_{group}"
             for key in list(st.session_state.keys()):
@@ -255,22 +258,46 @@ def _render_download_result(result: Optional[Dict], key: str) -> None:
     zip_path = (result or {}).get("zip") or ""
     prompt = ((result or {}).get("gemini") or {}).get("prompt") or ""
 
-    if prompt:
-        # The browser button lives in an iframe, so it cannot share a row with a
-        # Streamlit widget except through columns. A narrow first column keeps the two
-        # controls side by side instead of half a page apart.
-        gemini_column, zip_column = st.columns([1, 4])
-        with gemini_column:
+    if zip_path and Path(zip_path).is_file():
+        if prompt:
+            # The browser button lives in an iframe, so it cannot share a row with a
+            # Streamlit widget except through columns. A narrow first column keeps the
+            # two controls side by side instead of half a page apart.
+            gemini_column, zip_column = st.columns([1, 4])
+            with gemini_column:
+                st.components.v1.html(
+                    render_gemini_bridge(prompt, app_url=_app_url()),
+                    height=BRIDGE_HEIGHT,
+                )
+            with zip_column:
+                _render_zip_button(zip_path, key)
+        else:
+            _render_zip_button(zip_path, key)
+    else:
+        # HKUST project downloads are offered file by file, with no ZIP to unpack.
+        if prompt:
             st.components.v1.html(
                 render_gemini_bridge(prompt, app_url=_app_url()),
                 height=BRIDGE_HEIGHT,
             )
-        with zip_column:
-            _render_zip_button(zip_path, key)
+        files = downloadable_files((result or {}).get("files") or [], _workspace())
+        if files:
+            st.markdown(f"**Documents ({len(files)})**")
+            for index, path in enumerate(files):
+                with open(path, "rb") as handle:
+                    st.download_button(
+                        f":material/download: {path.name}",
+                        handle,
+                        file_name=path.name,
+                        key=f"file_{key}_{index}",
+                        mime=download_mime(path),
+                    )
+        else:
+            st.info("No documents were found for that selection.")
+
+    if prompt:
         with st.expander("Gemini prompt"):
             st.code(prompt, language="markdown")
-    else:
-        _render_zip_button(zip_path, key)
 
 
 def _render_draft_result(result: Optional[Dict], key: str) -> None:
@@ -324,6 +351,57 @@ def _selection_table(tenders, key: str) -> List[str]:
         disabled=["Tender", "Description", "Closing"],
     )
     return [row["Tender"] for row in edited if row.get("Select")]
+
+
+HKUST_PROJECT_CLICK_KEY = "open_hkust_invitation"
+
+
+def _select_invitation_project(tender_refs: tuple) -> None:
+    """Open the project whose arrow was clicked.
+
+    ``row`` is the position in the rows passed to the dataframe, which is the same order
+    as ``tender_refs``.
+    """
+    click = st.session_state.get(HKUST_PROJECT_CLICK_KEY)
+    row = int(getattr(click, "row", -1))
+    if 0 <= row < len(tender_refs):
+        st.session_state["hkust_invitation_ref"] = tender_refs[row]
+
+
+def _invitation_table(tenders) -> None:
+    """HKUST invitations: read-only rows, each with an arrow that opens the project.
+
+    Only one project is handled at a time, so there is no Select column and no shared
+    Fetch button; the project screen owns both.
+    """
+    rows = [
+        {
+            "Tender": tender.tender_no,
+            "Description": tender.description,
+            "Closing": tender.closing_date,
+            "Open": ":material/arrow_forward:",
+        }
+        for tender in tenders
+    ]
+    st.dataframe(
+        rows,
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "Tender": st.column_config.TextColumn("Tender", width="small"),
+            "Description": st.column_config.TextColumn("Description", width="medium"),
+            "Closing": st.column_config.TextColumn("Closing", width="small"),
+            "Open": st.column_config.ButtonColumn(
+                "",
+                type="tertiary",
+                width="small",
+                alignment="right",
+                on_click=_select_invitation_project,
+                args=(tuple(tender.tender_no for tender in tenders),),
+                key=HKUST_PROJECT_CLICK_KEY,
+            ),
+        },
+    )
 
 
 def _render_draft_action(university: str, selected_open: List, busy: bool) -> None:
@@ -462,9 +540,18 @@ def _render_fetch_progress(job_id: str) -> None:
 
 
 def _render_fetch_action(
-    university: str, selected: List, busy: bool, group: str = ""
+    university: str,
+    selected: List,
+    busy: bool,
+    group: str = "",
+    *,
+    archive: bool = True,
 ) -> None:
-    """One control in one place: Fetch → Fetching… → Download ZIP."""
+    """One control in one place: Fetch → Fetching… → the downloaded documents.
+
+    ``archive=False`` is used for an HKUST project, which offers its files one by one
+    instead of building a ZIP.
+    """
     suffix = f"_{group}" if group else ""
     key = f"scan_result_download_{university}{suffix}"
     error = st.session_state.pop(f"{key}_error", None)
@@ -481,13 +568,9 @@ def _render_fetch_action(
     selected_refs = sorted(tender.tender_no for tender in selected)
     fetched_refs = st.session_state.get(f"fetched_refs_{university}{suffix}") or []
     result = st.session_state.get(key)
-    zip_path = (result or {}).get("zip") or ""
-    if result and fetched_refs == selected_refs and zip_path and Path(zip_path).is_file():
+    if result and fetched_refs == selected_refs:
         _render_download_result(result, key)
         return
-
-    if result and fetched_refs == selected_refs:
-        st.info("No documents were found for that selection.")
 
     if st.button(
         "Fetch Documents",
@@ -497,6 +580,7 @@ def _render_fetch_action(
         _start_job(
             "download",
             university,
+            options={"archive": archive},
             tenders=tenders_to_payloads(selected),
             group=group,
         )
@@ -545,16 +629,16 @@ def _render_scan_result(
         f"{len(open_tenders)} open{filter_note}"
     )
     busy = bool(_active_job_id())
-    invited_selected: List = []
 
     if invited:
         st.markdown("**My Tender Invitation / Interested Tender(s)**")
-        invited_selected = selected_tenders(
-            invited, _selection_table(invited, f"select_{university}_invited")
-        )
         if university == "hkust":
-            _render_fetch_action(university, invited_selected, busy)
+            _invitation_table(invited)
+            st.caption("Open a project to fetch its documents.")
         else:
+            invited_selected = selected_tenders(
+                invited, _selection_table(invited, f"select_{university}_invited")
+            )
             _render_process_action(
                 university, invited_selected, busy, group="invited"
             )
@@ -571,11 +655,62 @@ def _render_scan_result(
             _render_process_action(university, open_selected, busy, group="open")
 
 
+def _render_project_screen(university: str, tender_ref: str, busy: bool) -> None:
+    """One HKUST invitation project: its details, Fetch, then its documents and Gemini."""
+    if st.button(
+        "← Back to invitations",
+        key=f"back_{university}_project",
+        disabled=busy,
+    ):
+        st.session_state.pop("hkust_invitation_ref", None)
+        st.rerun()
+
+    scan_result = st.session_state.get(f"scan_result_{university}") or {}
+    tenders = tenders_from_payloads(scan_result.get("tenders") or [])
+    tender = next((item for item in tenders if item.tender_no == tender_ref), None)
+    if tender is None:
+        st.session_state.pop("hkust_invitation_ref", None)
+        st.info("That project is no longer in the scanned list.")
+        return
+
+    st.subheader(tender.tender_no)
+    if tender.description:
+        st.markdown(tender.description)
+    details = []
+    if tender.closing_date:
+        details.append(f"Closing: {tender.closing_date}")
+    contact = " · ".join(
+        part
+        for part in (tender.contact_person, tender.contact_email)
+        if part and part.strip() and part.strip() != "Sir/Madam"
+    )
+    if contact:
+        details.append(contact)
+    if details:
+        st.caption(" · ".join(details))
+
+    # No ZIP for a single project: the result screen offers every file on its own.
+    _render_fetch_action(university, [tender], busy, group="project", archive=False)
+
+
 def _render_portal(university: str) -> None:
     label = UNIVERSITIES[university]
     busy = bool(_active_job_id())
+    scan_key = f"scan_result_{university}"
 
+    project_ref = ""
     if university == "hkust":
+        project_ref = str(st.session_state.get("hkust_invitation_ref") or "")
+        if project_ref and not st.session_state.get(scan_key):
+            # The scan that listed the project is gone, so there is nothing to go back to.
+            st.session_state.pop("hkust_invitation_ref", None)
+            project_ref = ""
+
+    if project_ref:
+        # The project screen replaces the scan controls; its Back button returns to the
+        # tables. Read the filter value only so the table can be rendered after Back.
+        hide_handled = bool(st.session_state.get("hide_handled_hkust", True))
+    elif university == "hkust":
         hide_handled = st.checkbox(
             "Hide tenders already handled in Gmail",
             value=True,
@@ -603,21 +738,24 @@ def _render_portal(university: str) -> None:
     active_kind = str(st.session_state.get("active_kind") or "")
     scanning_here = active_for_tab and active_kind == "scan"
 
-    if scanning_here:
-        state = _manager().poll(_active_job_id())
-        stopping = str(state.get("status") or "") == "cancelling"
-        if st.button(
-            "Stopping..." if stopping else "Stop",
-            key=f"stop_{university}",
-            disabled=stopping,
-        ):
-            _manager().cancel(_active_job_id())
-            st.rerun()
-    else:
-        if st.button(f"Scan {label} tenders", key=f"scan_{university}", disabled=busy):
-            _start_job("scan", university, options=options)
+    # The project screen replaces the scan controls; its Back button returns to them.
+    if not project_ref:
+        if scanning_here:
+            state = _manager().poll(_active_job_id())
+            stopping = str(state.get("status") or "") == "cancelling"
+            if st.button(
+                "Stopping..." if stopping else "Stop",
+                key=f"stop_{university}",
+                disabled=stopping,
+            ):
+                _manager().cancel(_active_job_id())
+                st.rerun()
+        else:
+            if st.button(
+                f"Scan {label} tenders", key=f"scan_{university}", disabled=busy
+            ):
+                _start_job("scan", university, options=options)
 
-    scan_key = f"scan_result_{university}"
     if active_for_tab:
         # The job's own result key; the scan table is separate and must stay visible
         # while a download/draft runs.
@@ -644,8 +782,8 @@ def _render_portal(university: str) -> None:
 
     # Results of jobs started from this tab are stored under kind-specific keys by the
     # fragment callback. Move them next to the table that produced them before rendering,
-    # so the first post-job run already shows Download ZIP instead of Fetch.
-    for group in ("", "invited", "open"):
+    # so the first post-job run already shows the download instead of Fetch.
+    for group in ("", "invited", "open", "project"):
         suffix = f"_{group}" if group else ""
         _consume_action_result(
             university,
@@ -655,13 +793,16 @@ def _render_portal(university: str) -> None:
         )
     _consume_action_result(university, "draft", f"scan_result_draft_{university}")
 
-    result = st.session_state.get(scan_key)
-    if result:
-        _render_scan_result(
-            university,
-            result,
-            hide_handled=hide_handled if university == "hkust" else None,
-        )
+    if project_ref:
+        _render_project_screen(university, project_ref, busy)
+    else:
+        result = st.session_state.get(scan_key)
+        if result:
+            _render_scan_result(
+                university,
+                result,
+                hide_handled=hide_handled if university == "hkust" else None,
+            )
 
     _render_log_section(university)
 
@@ -721,8 +862,8 @@ def render_app(auth: AuthResult) -> None:
     _render_br_upload()
 
     st.sidebar.warning(
-        "Streamlit Cloud storage is temporary. Download the ZIP after each job; "
-        "files disappear when the app restarts."
+        "Streamlit Cloud storage is temporary. Download the files after each job; "
+        "they disappear when the app restarts."
     )
 
     _manager().cleanup()

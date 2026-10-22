@@ -270,10 +270,12 @@ upload the BR certificate from the sidebar after signing in; it lasts for that r
 
 ### Gemini handoff (HKUST invitations)
 
-After **Fetch Documents** on an HKUST invitation, a **Gemini** button appears to the left
-of **Download ZIP**. The prompt lists the company details from `.env`/secrets, the tender
-details, the downloaded files, and the fields Gemini should propose values for. Download
-the ZIP to get the documents themselves; the app does not repackage them.
+The HKUST invitation table has an arrow at the end of each row instead of a Select
+checkbox. Clicking it opens that project on its own screen, which fetches that project's
+documents only. When the fetch finishes, each document is offered as its own download
+button — there is no ZIP for a single project — and a **Gemini** button appears above the
+list. The prompt lists the company details from `.env`/secrets, the tender details, the
+downloaded files, and the fields Gemini should propose values for.
 
 The app never calls the Gemini API, so the documents are not sent to Google by the
 server. Pressing the button:
@@ -282,7 +284,7 @@ server. Pressing the button:
    with `postMessage`. The prompt never appears in a URL, browser history, or storage.
 2. That page hands the prompt to the [Send to Gemini](https://chromewebstore.google.com/detail/gklmoobnblcdiglifjmdilofgndghmml)
    extension, which opens Gemini with the prompt filled in and **not submitted**.
-3. The user attaches the documents from the downloaded ZIP in Gemini and presses Enter.
+3. The user attaches the downloaded documents in Gemini and presses Enter.
    Gemini accepts about ten files per prompt; split the upload when there are more.
 
 Why the extra page: Streamlit components run in a sandboxed iframe with an opaque origin,
@@ -321,7 +323,7 @@ deployment is a no-go and the same `web/` app runs unchanged on Google Cloud Run
 ### Runtime notes
 
 - Community Cloud sleeps after 12 hours without traffic; wake it by visiting the URL.
-- The filesystem is ephemeral. Download the ZIP offered after each job; files and the
+- The filesystem is ephemeral. Download the results offered after each job; files and the
   uploaded BR certificate disappear on restart or redeploy.
 - One job runs at a time; a second **Start** is refused while a job is active.
 - Portal egress is a datacenter IP. HKUST runs reCAPTCHA and CityU rate-limits; if the

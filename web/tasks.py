@@ -143,7 +143,13 @@ def run_download(request: Dict[str, Any], reporter) -> Dict[str, Any]:
             progress_callback=reporter.progress,
         )
 
-    archive = zip_directory(dest_root, workspace / f"{label.lower()}-documents.zip")
+    # An HKUST project is downloaded on its own and offered file by file, so there is
+    # nothing to zip. Other universities keep their single archive.
+    archive = None
+    if (request.get("options") or {}).get("archive", True):
+        archive = zip_directory(
+            dest_root, workspace / f"{label.lower()}-documents.zip"
+        )
     reporter.log(f"[OK] Downloaded {len(saved)} file(s).")
     result = {
         "files": [str(path.relative_to(workspace)) for path in saved],
