@@ -132,10 +132,13 @@ def _start_job(
         return False
     if kind == "scan":
         # A fresh scan must not leave the previous list on screen, including a project
-        # screen opened from it.
+        # screen opened from it and anything fetched for that project.
         st.session_state.pop(f"scan_result_{university}", None)
-        if university == "hkust":
-            st.session_state.pop("hkust_invitation_ref", None)
+        st.session_state.pop(_project_ref_key(university), None)
+        st.session_state.pop(_project_click_key(university), None)
+        st.session_state.pop(f"fetched_refs_{university}_project", None)
+        st.session_state.pop(f"scan_result_download_{university}_project", None)
+        st.session_state.pop(f"scan_result_download_{university}_project_error", None)
         for group in ("invited", "open"):
             prefix = f"select_{university}_{group}"
             for key in list(st.session_state.keys()):
@@ -274,7 +277,7 @@ def _render_download_result(result: Optional[Dict], key: str) -> None:
         else:
             _render_zip_button(zip_path, key)
     else:
-        # HKUST project downloads are offered file by file, with no ZIP to unpack.
+        # Project downloads are offered file by file, with no ZIP to unpack.
         if prompt:
             st.components.v1.html(
                 render_gemini_bridge(prompt, app_url=_app_url()),
@@ -353,27 +356,53 @@ def _selection_table(tenders, key: str) -> List[str]:
     return [row["Tender"] for row in edited if row.get("Select")]
 
 
-HKUST_PROJECT_CLICK_KEY = "open_hkust_invitation"
+def _project_ref_key(university: str) -> str:
+    """The session key holding the invitation project currently open in this tab."""
+    return f"{university}_invitation_ref"
 
 
-def _select_invitation_project(tender_refs: tuple) -> None:
-    """Open the project whose arrow was clicked.
+def _project_click_key(university: str) -> str:
+    """The dataframe key holding the arrow click state for this tab.
+
+    All three university tabs render on every run, so these keys must not be shared.
+    """
+    return f"open_{university}_invitation"
+
+
+def _project_ref_for_click(tender_refs: tuple, click) -> Optional[str]:
+    """Turn an arrow click into a tender reference.
 
     ``row`` is the position in the rows passed to the dataframe, which is the same order
-    as ``tender_refs``.
+    as ``tender_refs``; sorting the grid does not change it.
     """
-    click = st.session_state.get(HKUST_PROJECT_CLICK_KEY)
-    row = int(getattr(click, "row", -1))
-    if 0 <= row < len(tender_refs):
-        st.session_state["hkust_invitation_ref"] = tender_refs[row]
+    row = getattr(click, "row", None)
+    if row is None:
+        return None
+    try:
+        index = int(row)
+    except (TypeError, ValueError):
+        return None
+    if 0 <= index < len(tender_refs):
+        return tender_refs[index]
+    return None
 
 
-def _invitation_table(tenders) -> None:
-    """HKUST invitations: read-only rows, each with an arrow that opens the project.
+def _select_invitation_project(university: str, tender_refs: tuple) -> None:
+    """Open the project whose arrow was clicked in this university's table."""
+    ref = _project_ref_for_click(
+        tender_refs, st.session_state.get(_project_click_key(university))
+    )
+    if ref is not None:
+        st.session_state[_project_ref_key(university)] = ref
+
+
+def _invitation_table(university: str, tenders) -> None:
+    """Invitations: read-only rows, each with an arrow that opens the project.
 
     Only one project is handled at a time, so there is no Select column and no shared
     Fetch button; the project screen owns both.
     """
+    tender_refs = tuple(tender.tender_no for tender in tenders)
     rows = [
         {
             "Tender": tender.tender_no,
@@ -385,6 +414,7 @@ def _invitation_table(tenders) -> None:
     ]
     st.dataframe(
         rows,
+        key=f"invitations_{university}",
         hide_index=True,
         width="stretch",
         column_config={
@@ -397,8 +427,8 @@ def _invitation_table(tenders) -> None:
                 width="small",
                 alignment="right",
                 on_click=_select_invitation_project,
-                args=(tuple(tender.tender_no for tender in tenders),),
-                key=HKUST_PROJECT_CLICK_KEY,
+                args=(university, tender_refs),
+                key=_project_click_key(university),
             ),
         },
     )
@@ -455,10 +485,11 @@ def _render_draft_action(university: str, selected_open: List, busy: bool) -> No
 def _render_process_action(
     university: str, selected: List, busy: bool, group: str = ""
 ) -> None:
-    """The EOI/download control for one CUHK/CityU table.
+    """The EOI/download control for one CUHK/CityU open-tender table.
 
-    Same one-control flow as HKUST: Fetch → Fetching… → Download ZIP. Each table gets
-    its own group so its package and button state are independent.
+    Fetch → Fetching… → Download ZIP. Each table gets its own group so its package and
+    button state are independent. Invitation projects use ``_render_fetch_action``
+    instead, one project at a time.
     """
     suffix = f"_{group}" if group else ""
     key = f"scan_result_download_{university}{suffix}"
@@ -546,11 +577,12 @@ def _render_fetch_action(
     group: str = "",
     *,
     archive: bool = True,
+    gemini: bool = False,
 ) -> None:
     """One control in one place: Fetch → Fetching… → the downloaded documents.
 
-    ``archive=False`` is used for an HKUST project, which offers its files one by one
-    instead of building a ZIP.
+    ``archive=False`` and ``gemini=True`` are used for an invitation project, which
+    offers its files one by one instead of building a ZIP and shows the Gemini button.
     """
     suffix = f"_{group}" if group else ""
     key = f"scan_result_download_{university}{suffix}"
@@ -572,15 +604,31 @@ def _render_fetch_action(
         _render_download_result(result, key)
         return
 
+    # Invitation rows normally have their EOI behind them, but a stale scan could still
+    # report one missing. Confirm before a click submits an Expression of Interest.
+    candidates = eoi_candidates(selected)
+    if candidates:
+        refs = ",".join(sorted(tender.tender_no for tender in selected))
+        confirmed = st.checkbox(
+            f"I understand an Expression of Interest will be submitted for "
+            f"{len(candidates)} tender(s).",
+            key=f"eoi_confirm_{university}{suffix}_{refs}",
+        )
+        disabled = busy or not selected or not confirmed
+        label = "Submit EOI & Fetch Documents"
+    else:
+        disabled = busy or not selected
+        label = "Fetch Documents"
+
     if st.button(
-        "Fetch Documents",
+        label,
         key=f"fetch_{university}{suffix}",
-        disabled=busy or not selected,
+        disabled=disabled,
     ):
         _start_job(
             "download",
             university,
-            options={"archive": archive},
+            options={"archive": archive, "gemini": gemini},
             tenders=tenders_to_payloads(selected),
             group=group,
         )
@@ -632,16 +680,8 @@ def _render_scan_result(
 
     if invited:
         st.markdown("**My Tender Invitation / Interested Tender(s)**")
-        if university == "hkust":
-            _invitation_table(invited)
-            st.caption("Open a project to fetch its documents.")
-        else:
-            invited_selected = selected_tenders(
-                invited, _selection_table(invited, f"select_{university}_invited")
-            )
-            _render_process_action(
-                university, invited_selected, busy, group="invited"
-            )
+        _invitation_table(university, invited)
+        st.caption("Open a project to fetch its documents.")
 
     if open_tenders:
         st.markdown("**Tender Notice**")
@@ -656,20 +696,21 @@ def _render_scan_result(
 
 
 def _render_project_screen(university: str, tender_ref: str, busy: bool) -> None:
-    """One HKUST invitation project: its details, Fetch, then its documents and Gemini."""
+    """One invitation project: its details, Fetch, then its documents and Gemini."""
+    ref_key = _project_ref_key(university)
     if st.button(
         "← Back to invitations",
         key=f"back_{university}_project",
         disabled=busy,
     ):
-        st.session_state.pop("hkust_invitation_ref", None)
+        st.session_state.pop(ref_key, None)
         st.rerun()
 
     scan_result = st.session_state.get(f"scan_result_{university}") or {}
     tenders = tenders_from_payloads(scan_result.get("tenders") or [])
     tender = next((item for item in tenders if item.tender_no == tender_ref), None)
     if tender is None:
-        st.session_state.pop("hkust_invitation_ref", None)
+        st.session_state.pop(ref_key, None)
         st.info("That project is no longer in the scanned list.")
         return
 
@@ -689,8 +730,16 @@ def _render_project_screen(university: str, tender_ref: str, busy: bool) -> None
     if details:
         st.caption(" · ".join(details))
 
-    # No ZIP for a single project: the result screen offers every file on its own.
-    _render_fetch_action(university, [tender], busy, group="project", archive=False)
+    # No ZIP for a single project: the result screen offers every file on its own, next
+    # to the Gemini button.
+    _render_fetch_action(
+        university,
+        [tender],
+        busy,
+        group="project",
+        archive=False,
+        gemini=True,
+    )
 
 
 def _render_portal(university: str) -> None:
@@ -698,29 +747,32 @@ def _render_portal(university: str) -> None:
     busy = bool(_active_job_id())
     scan_key = f"scan_result_{university}"
 
-    project_ref = ""
-    if university == "hkust":
-        project_ref = str(st.session_state.get("hkust_invitation_ref") or "")
-        if project_ref and not st.session_state.get(scan_key):
-            # The scan that listed the project is gone, so there is nothing to go back to.
-            st.session_state.pop("hkust_invitation_ref", None)
-            project_ref = ""
+    ref_key = _project_ref_key(university)
+    project_ref = str(st.session_state.get(ref_key) or "")
+    if project_ref and not st.session_state.get(scan_key):
+        # The scan that listed the project is gone, so there is nothing to go back to.
+        st.session_state.pop(ref_key, None)
+        project_ref = ""
 
-    if project_ref:
+    hide_handled: Optional[bool] = None
+    options: Dict = {}
+    if university == "hkust":
         # The project screen replaces the scan controls; its Back button returns to the
         # tables. Read the filter value only so the table can be rendered after Back.
         hide_handled = bool(st.session_state.get("hide_handled_hkust", True))
-    elif university == "hkust":
-        hide_handled = st.checkbox(
-            "Hide tenders already handled in Gmail",
-            value=True,
-            key=f"hide_handled_{university}",
-            # The filter is applied during the scan, so changing it mid-run would only
-            # desynchronise the option from the job already reading it.
-            disabled=busy,
-        )
-        options = {"hide_handled": hide_handled}
-    else:
+        if not project_ref:
+            hide_handled = st.checkbox(
+                "Hide tenders already handled in Gmail",
+                value=True,
+                key=f"hide_handled_{university}",
+                # The filter is applied during the scan, so changing it mid-run would
+                # only desynchronise the option from the job already reading it.
+                disabled=busy,
+            )
+            options = {"hide_handled": hide_handled}
+    elif not project_ref:
+        # A project screen was reached through a scan, so the credentials are known to
+        # work; asking for them again would only hide the project.
         user_id = config.CUHK_USER_ID if university == "cuhk" else config.CITYU_USER_ID
         password = config.CUHK_PASSWORD if university == "cuhk" else config.CITYU_PASSWORD
         if not user_id or not password:
@@ -729,7 +781,6 @@ def _render_portal(university: str) -> None:
                 f"{label.upper()}_USER_ID and {label.upper()}_PASSWORD to the app secrets."
             )
             return
-        options = {}
 
     active_for_tab = (
         bool(_active_job_id())

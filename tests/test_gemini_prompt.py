@@ -6,11 +6,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
-import config
 from scraper.models import TenderDocument, TenderNotice
 from scraper.paths import tender_dir_name
 from web.gemini import (
-    GEMINI_MAX_ATTACHMENTS,
+    GEMINI_SKILL,
     TO_CONFIRM,
     build_gemini_prompt,
     document_paths,
@@ -42,68 +41,86 @@ PROMPT_PATH = "HKUST/Chip Fabrication Service/TNG2600120EOI_I01.pdf"
 
 class TestPrompt(unittest.TestCase):
 
-    def setUp(self):
-        patcher = patch.multiple(
-            config,
-            COMPANY_NAME="Example Engineering Ltd",
-            CONTACT_PERSON_NAME="Larry Liu",
-            CONTACT_EMAIL="larry@example.com",
-            CONTACT_PHONE="+852 1234 5678",
-            COMPANY_ADDRESS="1 Example Road, Hong Kong",
-            SIGN_OFF="Best regards,\nLarry Liu\nExample Engineering Ltd",
-        )
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def test_prompt_carries_the_supplier_and_tender_details(self):
+    def test_prompt_invokes_the_gemini_skill(self):
         prompt = build_gemini_prompt([invitation()], [PROMPT_PATH])
 
-        self.assertIn("Example Engineering Ltd", prompt)
-        self.assertIn("larry@example.com", prompt)
+        self.assertTrue(prompt.startswith(GEMINI_SKILL + "\n"), prompt)
+
+    def test_prompt_carries_the_tender_and_file_details(self):
+        prompt = build_gemini_prompt([invitation()], [PROMPT_PATH])
+
         self.assertIn("TNG2600120 EOI", prompt)
+        self.assertIn("Chip Fabrication Service", prompt)
         self.assertIn("29-Oct-2026 15:00:00", prompt)
         self.assertIn("TNG2600120EOI_I01.pdf", prompt)
         self.assertIn("Invitation, 415.6 KB", prompt)
 
-    def test_prompt_forbids_inventing_values(self):
+    def test_the_form_filling_instructions_live_in_the_skill_not_the_prompt(self):
         prompt = build_gemini_prompt([invitation()], [PROMPT_PATH])
 
-        self.assertIn(TO_CONFIRM, prompt)
-        self.assertIn("Never invent", prompt)
-        self.assertIn("Do not claim you have filled in", prompt)
-        self.assertIn(
-            "| Document | Page | Field | Proposed value | Status | Notes |", prompt
-        )
+        self.assertNotIn("Supplier details", prompt)
+        self.assertNotIn("What to produce", prompt)
+        self.assertNotIn("Never invent", prompt)
+        self.assertNotIn("| Document | Page | Field", prompt)
 
-    def test_missing_company_details_are_marked_to_confirm(self):
-        with patch.object(config, "CONTACT_PHONE", ""):
-            prompt = build_gemini_prompt([invitation()], [])
+    def test_an_unset_closing_date_is_marked_to_confirm(self):
+        tender = invitation()
+        tender.closing_date = ""
 
-        self.assertIn(f"{TO_CONFIRM} (not provided)", prompt)
+        prompt = build_gemini_prompt([tender], [])
 
-    def test_prompt_mentions_the_attachment_limit(self):
-        prompt = build_gemini_prompt([invitation()], [])
-
-        self.assertIn(f"about {GEMINI_MAX_ATTACHMENTS} files per prompt", prompt)
-
-    def test_explicitly_leaves_entry_and_submission_to_the_supplier(self):
-        prompt = build_gemini_prompt([invitation()], [])
-
-        self.assertIn("You are proposing values for the supplier to enter", prompt)
+        self.assertIn(f"- Closing: {TO_CONFIRM}", prompt)
 
     def test_files_are_grouped_under_their_tender(self):
         prompt = build_gemini_prompt([invitation()], [PROMPT_PATH])
 
-        self.assertLess(
-            prompt.index("### Tender 1: TNG2600120 EOI"),
-            prompt.index("TNG2600120EOI_I01.pdf"),
-        )
+        self.assertLess(prompt.index("## Tender"), prompt.index("TNG2600120EOI_I01.pdf"))
+
+    def test_each_tender_gets_its_own_section(self):
+        second = invitation()
+        second.tender_no = "TNG2600118 EOI"
+
+        prompt = build_gemini_prompt([invitation(), second], [])
+
+        self.assertIn("## Tender 1: TNG2600120 EOI", prompt)
+        self.assertIn("## Tender 2: TNG2600118 EOI", prompt)
 
     def test_files_from_an_unknown_folder_are_still_listed(self):
         prompt = build_gemini_prompt([invitation()], ["HKUST/stray-notes.txt"])
 
         self.assertIn("Other files in this download", prompt)
         self.assertIn("stray-notes.txt", prompt)
+
+    def test_prompt_defaults_to_hkust(self):
+        prompt = build_gemini_prompt([invitation()], [PROMPT_PATH])
+
+        self.assertIn("- University: HKUST", prompt)
+
+    def test_prompt_names_the_university(self):
+        for university, label in (
+            ("hkust", "HKUST"),
+            ("cuhk", "CUHK"),
+            ("cityu", "CityU"),
+        ):
+            with self.subTest(university=university):
+                prompt = build_gemini_prompt(
+                    [invitation()], [PROMPT_PATH], university=university
+                )
+                self.assertIn(f"- University: {label}", prompt)
+
+    def test_an_unknown_university_still_gets_a_sensible_label(self):
+        prompt = build_gemini_prompt(
+            [invitation()], [PROMPT_PATH], university="polyu"
+        )
+
+        self.assertIn("- University: POLYU", prompt)
+
+    def test_cuhk_files_are_grouped_under_their_tender(self):
+        path = "CUHK/Chip Fabrication Service/TNG2600120EOI_I01.pdf"
+
+        prompt = build_gemini_prompt([invitation()], [path], university="cuhk")
+
+        self.assertLess(prompt.index("## Tender"), prompt.index(path))
 
 
 class TestDocumentPaths(unittest.TestCase):
@@ -200,7 +217,7 @@ def _download_request(university, workspace, tenders, options=None):
 
 
 class TestDownloadIntegration(unittest.TestCase):
-    """The prompt is an add-on: it must appear for HKUST and never cost a download."""
+    """The prompt is an add-on the project screens ask for; it must never cost a download."""
 
     def workspace(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -222,8 +239,10 @@ class TestDownloadIntegration(unittest.TestCase):
             )
         return result, reporter
 
-    def test_hkust_download_result_carries_the_prompt(self):
-        result, _ = self.run_download("hkust", self.workspace())
+    def test_hkust_project_download_carries_the_prompt(self):
+        result, _ = self.run_download(
+            "hkust", self.workspace(), options={"gemini": True}
+        )
 
         self.assertTrue(Path(result["zip"]).is_file())
         self.assertIn("gemini", result)
@@ -234,7 +253,7 @@ class TestDownloadIntegration(unittest.TestCase):
     def test_a_project_download_can_skip_the_zip(self):
         workspace = self.workspace()
         result, _ = self.run_download(
-            "hkust", workspace, options={"archive": False}
+            "hkust", workspace, options={"archive": False, "gemini": True}
         )
 
         self.assertEqual(result["zip"], "")
@@ -243,14 +262,53 @@ class TestDownloadIntegration(unittest.TestCase):
             self.assertTrue((workspace / relative).is_file(), relative)
         self.assertIn("TNG2600120 EOI", result["gemini"]["prompt"])
 
-    def test_other_universities_get_no_gemini_component(self):
-        result, _ = self.run_download("cuhk", self.workspace())
+    def test_an_open_tender_download_gets_no_prompt(self):
+        # The open-tender tables keep their ZIP and never show Gemini.
+        result, _ = self.run_download("hkust", self.workspace())
 
         self.assertTrue(Path(result["zip"]).is_file())
         self.assertNotIn("gemini", result)
 
+    def test_cuhk_project_download_carries_a_cuhk_prompt(self):
+        workspace = self.workspace()
+        result, _ = self.run_download(
+            "cuhk", workspace, options={"archive": False, "gemini": True}
+        )
+
+        self.assertEqual(result["zip"], "")
+        self.assertTrue(result["files"])
+        prompt = result["gemini"]["prompt"]
+        self.assertIn("- University: CUHK", prompt)
+        self.assertNotIn("HKUST", prompt)
+        self.assertNotIn("CityU", prompt)
+
+    def test_cityu_project_download_carries_a_cityu_prompt(self):
+        result, _ = self.run_download(
+            "cityu", self.workspace(), options={"archive": False, "gemini": True}
+        )
+
+        prompt = result["gemini"]["prompt"]
+        self.assertIn("- University: CityU", prompt)
+        self.assertNotIn("HKUST", prompt)
+        self.assertNotIn("CUHK", prompt)
+
+    def test_the_prompt_builder_receives_the_university(self):
+        from web import tasks
+
+        with patch.object(
+            tasks, "build_gemini_prompt", return_value="brief"
+        ) as builder:
+            result, _ = self.run_download(
+                "cuhk", self.workspace(), options={"archive": False, "gemini": True}
+            )
+
+        self.assertEqual(result["gemini"]["prompt"], "brief")
+        self.assertEqual(builder.call_args.kwargs.get("university"), "cuhk")
+
     def test_nothing_downloaded_means_no_gemini_component(self):
-        result, _ = self.run_download("hkust", self.workspace(), _empty_downloader)
+        result, _ = self.run_download(
+            "hkust", self.workspace(), _empty_downloader, options={"gemini": True}
+        )
 
         self.assertNotIn("gemini", result)
 
@@ -265,7 +323,10 @@ class TestDownloadIntegration(unittest.TestCase):
             tasks, "build_gemini_prompt", side_effect=OSError("disk full")
         ):
             result = tasks.run_download(
-                _download_request("hkust", workspace, [invitation()]), reporter
+                _download_request(
+                    "hkust", workspace, [invitation()], {"gemini": True}
+                ),
+                reporter,
             )
 
         self.assertTrue(Path(result["zip"]).is_file())

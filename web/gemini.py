@@ -1,35 +1,30 @@
-"""Build the Gemini prompt for HKUST invitation downloads.
+"""Build the Gemini prompt for invitation project downloads.
 
 The app never calls the Gemini API: the supplier's documents must not leave the
 machine through a server-side request. The prompt is handed to the browser component,
 which passes it to the Gemini web composer through the Send to Gemini extension. Nothing
 here reads, merges, or converts the documents -- it only lists them.
+
+The instructions for filling the forms live in the ``pdf-form-filler`` skill the
+supplier keeps in Gemini, so the prompt only invokes that skill and describes the
+project: the same short prompt for every download, with the tender and file list
+changing.
 """
 
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Tuple
 
-import config
 from scraper.models import TenderNotice
 from scraper.paths import tender_dir_name
 
 GEMINI_EXTENSION_ID = "gklmoobnblcdiglifjmdilofgndghmml"
 
-# The consumer composer accepts roughly ten attachments per prompt. The prompt may list
-# more, so it tells the reader how to split the upload rather than failing.
-GEMINI_MAX_ATTACHMENTS = 10
+# The Gemini skill that carries the form-filling instructions.
+GEMINI_SKILL = "@pdf-form-filler"
 
 TO_CONFIRM = "[TO CONFIRM]"
 
-OUTPUT_TABLE = (
-    "| Document | Page | Field | Proposed value | Status | Notes |\n"
-    "| --- | --- | --- | --- | --- | --- |"
-)
-
-
-def _value(raw: str) -> str:
-    """Show an unset company detail as something the reader must not invent."""
-    return raw.strip() if raw and raw.strip() else f"{TO_CONFIRM} (not provided)"
+UNIVERSITY_LABELS = {"hkust": "HKUST", "cuhk": "CUHK", "cityu": "CityU"}
 
 
 def _document_lines(tender: TenderNotice, paths: Sequence[str]) -> List[str]:
@@ -55,7 +50,7 @@ def _files_by_tender(
 ) -> Tuple[Dict[str, List[str]], List[str]]:
     """Group prompt paths by the tender folder they sit in.
 
-    The prompt mirrors the downloaded ZIP, so a path is ``<HKUST>/<tender folder>/<file>``.
+    Each prompt path is ``<university>/<tender folder>/<file>``, the download layout.
     A file the downloader wrote elsewhere still belongs in the prompt, so it is returned
     separately instead of being dropped.
     """
@@ -75,11 +70,11 @@ def _files_by_tender(
 
 
 def document_paths(files: Iterable[Path], root: Path) -> List[str]:
-    """Paths for the prompt, using the same layout as the downloaded ZIP.
+    """Paths for the prompt, matching the download folder layout.
 
-    The ZIP keeps the tender folder under the university label, so the prompt's file list
-    matches what the user sees after unzipping. Symlinks, missing files, and paths that
-    would climb out of the root are skipped.
+    The download keeps the tender folder under the university label, so the prompt's file
+    list matches the files on disk. Symlinks, missing files, and paths that would climb
+    out of the root are skipped.
     """
     root = Path(root).resolve()
     paths: List[str] = []
@@ -108,40 +103,24 @@ def document_paths(files: Iterable[Path], root: Path) -> List[str]:
 
 
 def build_gemini_prompt(
-    tenders: Sequence[TenderNotice], document_paths: Sequence[str]
+    tenders: Sequence[TenderNotice],
+    document_paths: Sequence[str],
+    *,
+    university: str = "hkust",
 ) -> str:
-    """The brief Gemini receives, with the downloaded files listed by tender."""
+    """The short brief Gemini receives: the skill, the project, and its files."""
+    key = str(university or "").lower()
+    label = UNIVERSITY_LABELS.get(key, key.upper() or "University")
+
     buckets, unassigned = _files_by_tender(tenders, document_paths)
-    sections: List[str] = [
-        "# HKUST tender forms: preparation brief",
-        "",
-        "You are helping a Hong Kong supplier prepare the forms for an HKUST tender "
-        "invitation. The attached files were downloaded from the HKUST e-Tender portal. "
-        "Work out exactly what has to be filled in, signed, stamped and returned, and "
-        "propose the values.",
-        "",
-        "## Supplier details",
-        "",
-        f"- Company name: {_value(config.COMPANY_NAME)}",
-        f"- Contact person: {_value(config.CONTACT_PERSON_NAME)}",
-        f"- Email: {_value(config.CONTACT_EMAIL)}",
-        f"- Phone: {_value(config.CONTACT_PHONE)}",
-        f"- Address: {_value(config.COMPANY_ADDRESS)}",
-    ]
-    if config.SIGN_OFF.strip():
-        sections.append(f"- Preferred sign-off: {config.SIGN_OFF.strip()}")
-    sections.extend(
-        [
-            "",
-            "Use these details verbatim for supplier fields. If a form asks for anything "
-            f"not listed above, write `{TO_CONFIRM}` instead of guessing.",
-            "",
-            "## Tenders and files in this download",
-            "",
-        ]
-    )
+    sections: List[str] = [GEMINI_SKILL, ""]
+    many = len(tenders) > 1
 
     for index, tender in enumerate(tenders, start=1):
+        if many:
+            sections.extend([f"## Tender {index}: {tender.tender_no}", ""])
+        else:
+            sections.extend(["## Tender", ""])
         contact = " ".join(
             part
             for part in (tender.contact_person, tender.contact_email)
@@ -149,71 +128,29 @@ def build_gemini_prompt(
         )
         sections.extend(
             [
-                f"### Tender {index}: {tender.tender_no}",
-                "",
-                f"- Description: {tender.description or TO_CONFIRM}",
+                f"- University: {label}",
+                f"- Tender: {tender.tender_no}"
+                + (f" — {tender.description}" if tender.description else ""),
                 f"- Closing: {tender.closing_date or TO_CONFIRM}",
                 f"- Portal contact: {contact or TO_CONFIRM}",
             ]
         )
         lines = _document_lines(tender, buckets.get(tender_dir_name(tender), []))
         if lines:
-            sections.append("- Files downloaded for this tender:")
+            sections.append("- Files:")
             sections.extend(f"  {line}" for line in lines)
         else:
-            sections.append("- Files downloaded for this tender: none")
+            sections.append("- Files: none")
         sections.append("")
 
     if unassigned:
         sections.extend(
             [
-                "### Other files in this download",
+                "## Other files in this download",
                 "",
                 *[f"- `{path}`" for path in unassigned],
                 "",
             ]
         )
 
-    sections.extend(
-        [
-            "## What to produce",
-            "",
-            "1. Read every attached document. Identify the forms that must be completed, "
-            "the fields each one requires, and anything that must be signed, stamped, "
-            "dated or witnessed.",
-            "2. Propose a value for every field, using the supplier details above or the "
-            "documents themselves. Mark anything you cannot source as "
-            f"`{TO_CONFIRM}`.",
-            "3. List any required attachment or supporting document that is missing "
-            "from this download.",
-            "4. At the end, list the questions the supplier must answer before the "
-            "forms can be completed.",
-            "",
-            "Present the field-by-field answers as a Markdown table:",
-            "",
-            OUTPUT_TABLE,
-            "",
-            "Status must be one of: `from supplier details`, `from document`, "
-            f"`{TO_CONFIRM}`.",
-            "",
-            "## Rules",
-            "",
-            "- Never invent a value: no company numbers, registration numbers, dates, "
-            "amounts, names or signatures that are not in the attachments or the "
-            "supplier details above.",
-            "- Do not claim you have filled in, saved, signed or submitted any PDF. You "
-            "are proposing values for the supplier to enter.",
-            "- Do not use web search or outside knowledge about this tender; rely on the "
-            "attachments.",
-            "- Do not give legal, tax or insurance advice. Point out what the documents "
-            "require and let the supplier decide.",
-            "",
-            "## Attachments",
-            "",
-            f"This download contains {len(document_paths)} document(s). Gemini accepts "
-            f"about {GEMINI_MAX_ATTACHMENTS} files per prompt, so if there are more, ask "
-            "the supplier which files to upload next and start with the forms that must "
-            "be filled in.",
-        ]
-    )
     return "\n".join(sections).strip() + "\n"

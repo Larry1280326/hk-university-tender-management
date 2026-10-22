@@ -228,8 +228,8 @@ To run the automated verification suite:
 uv run python -m unittest discover -s tests -v
 ```
 
-Of the 139 tests in the suite:
-- **132 unit tests run offline by default**, verifying mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, the interactive menu loop, tender selection, document download helpers, attachment validation, regex extraction, and `.env` dynamic loading without requiring network access.
+Of the 201 tests in the suite:
+- **194 unit tests run offline by default**, verifying mock workflows, MIME generation, IMAP session handling, the account connection check, the already-handled mailbox scan, the interactive menu loop, tender selection, document download helpers, attachment validation, regex extraction, invitation project routing, and `.env` dynamic loading without requiring network access.
 - **7 live-portal / slow-network integration tests are skipped by default** (`tests/test_portal_reachability.py` and `tests/test_portal_slow_network.py`). Enable them explicitly when testing against the live HKUST portal:
   ```bash
   RUN_LIVE_PORTAL_TEST=1 RUN_SLOW_NETWORK_TEST=1 uv run python -m unittest discover -s tests -v
@@ -268,14 +268,21 @@ upload the BR certificate from the sidebar after signing in; it lasts for that r
    for a login (`[auth]` or `WEB_PASSWORD`), so the URL alone is not enough.
 5. The first boot installs `packages.txt` and then Chromium on first use (30–120 s).
 
-### Gemini handoff (HKUST invitations)
+### Gemini handoff (invitation projects)
 
-The HKUST invitation table has an arrow at the end of each row instead of a Select
-checkbox. Clicking it opens that project on its own screen, which fetches that project's
-documents only. When the fetch finishes, each document is offered as its own download
-button — there is no ZIP for a single project — and a **Gemini** button appears above the
-list. The prompt lists the company details from `.env`/secrets, the tender details, the
-downloaded files, and the fields Gemini should propose values for.
+The **My Tender Invitation / Interested Tender(s)** table in all three university tabs
+has an arrow at the end of each row instead of a Select checkbox. Clicking it opens that
+project on its own screen, which fetches that project's documents only. When the fetch
+finishes, each document is offered as its own download button — there is no ZIP for a
+single project — and a **Gemini** button appears above the list. The prompt is short:
+it calls the **`@pdf-form-filler`** Gemini skill the supplier keeps in Gemini and then
+lists the university, the tender number and description, the closing date, the portal
+contact, and the downloaded files. The instructions for filling the forms live in that
+skill, so the same prompt works for every project.
+
+Open tenders are unchanged: HKUST creates Gmail drafts, while CUHK and CityU keep their
+multi-select table, EOI confirmation, and single ZIP download. Open-tender downloads do
+not show Gemini.
 
 The app never calls the Gemini API, so the documents are not sent to Google by the
 server. Pressing the button:

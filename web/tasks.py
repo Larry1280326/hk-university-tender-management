@@ -114,7 +114,10 @@ def run_scan(request: Dict[str, Any], reporter) -> Dict[str, Any]:
         "tenders": tenders_to_payloads(tenders),
         "handled_count": skipped,
         "handled_known_count": len(existing),
-        "hide_handled": bool(options.get("hide_handled", True)),
+        # Only HKUST consults Gmail, so only HKUST has a filter state to report.
+        "hide_handled": (
+            bool(options.get("hide_handled", True)) if university == "hkust" else None
+        ),
     }
 
 
@@ -143,10 +146,11 @@ def run_download(request: Dict[str, Any], reporter) -> Dict[str, Any]:
             progress_callback=reporter.progress,
         )
 
-    # An HKUST project is downloaded on its own and offered file by file, so there is
-    # nothing to zip. Other universities keep their single archive.
+    # An invitation project is downloaded on its own and offered file by file, so there
+    # is nothing to zip. Open-tender downloads keep their single archive.
+    options = request.get("options") or {}
     archive = None
-    if (request.get("options") or {}).get("archive", True):
+    if options.get("archive", True):
         archive = zip_directory(
             dest_root, workspace / f"{label.lower()}-documents.zip"
         )
@@ -156,11 +160,16 @@ def run_download(request: Dict[str, Any], reporter) -> Dict[str, Any]:
         "zip": str(archive) if archive else "",
     }
 
-    # Only HKUST invitations carry forms worth sending to Gemini. The prompt is a bonus:
-    # a failure here must never turn a successful download into a failed job.
-    if university == "hkust" and saved:
+    # Only invitation project screens ask for a prompt; open-tender downloads do not.
+    # The prompt is a bonus: a failure here must never turn a successful download into
+    # a failed job.
+    if options.get("gemini") and saved:
         try:
-            prompt = build_gemini_prompt(tenders, document_paths(saved, dest_root))
+            prompt = build_gemini_prompt(
+                tenders,
+                document_paths(saved, dest_root),
+                university=university,
+            )
             result["gemini"] = {"prompt": prompt}
         except Exception as exc:  # noqa: BLE001 - the download already succeeded
             reporter.log(f"[!] Gemini prompt not built: {type(exc).__name__}: {exc}")
