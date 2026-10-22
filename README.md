@@ -268,6 +268,32 @@ upload the BR certificate from the sidebar after signing in; it lasts for that r
    for a login (`[auth]` or `WEB_PASSWORD`), so the URL alone is not enough.
 5. The first boot installs `packages.txt` and then Chromium on first use (30–120 s).
 
+### Gemini handoff (HKUST invitations)
+
+After **Fetch Documents** on an HKUST invitation, a **Gemini** button appears to the left
+of **Download ZIP**. The prompt lists the company details from `.env`/secrets, the tender
+details, the downloaded files, and the fields Gemini should propose values for. Download
+the ZIP to get the documents themselves; the app does not repackage them.
+
+The app never calls the Gemini API, so the documents are not sent to Google by the
+server. Pressing the button:
+
+1. Opens `web/static/gemini_bridge.html` as a top-level page and passes the prompt to it
+   with `postMessage`. The prompt never appears in a URL, browser history, or storage.
+2. That page hands the prompt to the [Send to Gemini](https://chromewebstore.google.com/detail/gklmoobnblcdiglifjmdilofgndghmml)
+   extension, which opens Gemini with the prompt filled in and **not submitted**.
+3. The user attaches the documents from the downloaded ZIP in Gemini and presses Enter.
+   Gemini accepts about ten files per prompt; split the upload when there are more.
+
+Why the extra page: Streamlit components run in a sandboxed iframe with an opaque origin,
+where Chrome does not expose `chrome.runtime`, so the component cannot reach the
+extension itself. Static serving is enabled in `.streamlit/config.toml` for this one page
+(`server.enableStaticServing`), and it works the same locally and on Community Cloud.
+
+The extension is third-party, closed-source, and may be blocked by a managed Chrome. When
+it is missing or disabled, the bridge tab says so and the prompt can still be copied from
+the **Gemini prompt** expander and pasted into Gemini manually.
+
 ### BR certificate
 
 The Business Registration PDF is not committed (`.gitignore` covers `assets/*.pdf`), so a
