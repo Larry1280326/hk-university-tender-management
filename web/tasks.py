@@ -105,9 +105,15 @@ def run_scan(request: Dict[str, Any], reporter) -> Dict[str, Any]:
         )
 
     reporter.log(f"[OK] Found {len(tenders)} tender(s).")
+    # ``handled_count`` is the number of rows this scan actually removed, not how many
+    # references Gmail held: the two differ whenever the mailbox remembers tenders that
+    # have since closed and left the portal listing.
+    skipped = len(getattr(parser, "skipped_handled_refs", []) or [])
     return {
         "tenders": tenders_to_payloads(tenders),
-        "handled_count": len(existing),
+        "handled_count": skipped,
+        "handled_known_count": len(existing),
+        "hide_handled": bool(options.get("hide_handled", True)),
     }
 
 

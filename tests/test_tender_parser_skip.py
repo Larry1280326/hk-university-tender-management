@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import MagicMock
 
 from scraper.HKUST.parser import OPEN_TABLE_SELECTOR, TenderParser
-from mailer.email_parser import normalize_tender_ref
+from mailer.email_parser import handled_tender_key, normalize_tender_ref
 from tests.portal_fixtures import OPEN_TITLE, parser_on, rendered_page, tender_table
 
 
@@ -45,6 +45,9 @@ class TestTenderParserSkip(unittest.TestCase):
         # Progress callback should record the skip.
         self.assertTrue(any("Already in Gmail" in msg for msg in progress_calls))
 
+        # Only the skipped row is reported, so the UI can say what was actually hidden.
+        self.assertEqual(parser.skipped_handled_refs, ["TNP2600099"])
+
     def test_reference_handled_at_another_university_does_not_hide_it(self):
         """The hide key is (slug, ref): the same number at CUHK is a different tender."""
         html = tender_table(
@@ -74,6 +77,17 @@ class TestTenderParserSkip(unittest.TestCase):
         self.assertEqual(
             normalize_tender_ref("PU/2026/001"),
             normalize_tender_ref("pu-2026-001"),
+        )
+
+    def test_workflow_marker_does_not_change_identity(self):
+        """The portal writes "TNG2600120 EOI"; Gmail subjects carry "TNG2600120"."""
+        self.assertEqual(
+            normalize_tender_ref("TNG2600120 EOI"),
+            normalize_tender_ref("TNG2600120"),
+        )
+        self.assertEqual(
+            handled_tender_key("hkust", "TNG2600120 EOI"),
+            handled_tender_key("hkust", "TNG2600120"),
         )
 
 

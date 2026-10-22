@@ -55,10 +55,16 @@ def extract_tender_refs_from_subject(text: str) -> Set[str]:
 
 
 def normalize_tender_ref(ref: Optional[str]) -> str:
-    """Normalize tender number for consistent comparison (e.g. TNP2600099, PU/2026/001)."""
+    """Normalize tender number for consistent comparison (e.g. TNP2600099, PU/2026/001).
+
+    The portal appends workflow markers to some references -- invitations read
+    ``TNG2600120 EOI`` while the same reference in a Gmail subject is ``TNG2600120``.
+    Dropping the trailing marker is what makes the two compare equal.
+    """
     if not ref:
         return ""
-    return re.sub(r"[\s\-_/]", "", ref).upper()
+    text = re.sub(r"[\s\-_/]", "", ref).upper()
+    return re.sub(r"(?<=\d)(?:EOI|PQ)$", "", text)
 
 
 def handled_tender_key(slug: str, ref: Optional[str]) -> Tuple[str, str]:

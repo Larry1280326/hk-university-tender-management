@@ -484,17 +484,38 @@ def _render_inline_draft(university: str) -> None:
         st.error(error)
 
 
-def _render_scan_result(university: str, result: Dict) -> None:
+def _render_scan_result(
+    university: str, result: Dict, *, hide_handled: Optional[bool] = None
+) -> None:
     tenders = tenders_from_payloads(result.get("tenders") or [])
     if not tenders:
         st.info("No active tenders were found.")
         return
 
     invited, open_tenders = split_groups(tenders)
+    # Only rows this scan removed count as hidden; Gmail may know far more references.
     handled = int(result.get("handled_count") or 0)
+    scanned_hide = result.get("hide_handled")
+    if (
+        hide_handled is not None
+        and scanned_hide is not None
+        and bool(scanned_hide) != bool(hide_handled)
+    ):
+        st.info(
+            "The Gmail filter has changed since this scan. "
+            "Run the scan again to refresh the list."
+        )
+    known = int(result.get("handled_known_count") or 0)
+    if scanned_hide is True:
+        filter_note = f" · {handled} of {known} handled tender(s) hidden"
+    elif scanned_hide is False:
+        # Say plainly that the mailbox was not consulted, so identical tables are expected.
+        filter_note = " · Gmail filter off"
+    else:
+        filter_note = ""
     st.caption(
         f"{len(tenders)} tender(s) · {len(invited)} invitation(s) · "
-        f"{len(open_tenders)} open · {handled} handled reference(s) hidden"
+        f"{len(open_tenders)} open{filter_note}"
     )
     busy = bool(_active_job_id())
     invited_selected: List = []
@@ -532,6 +553,9 @@ def _render_portal(university: str) -> None:
             "Hide tenders already handled in Gmail",
             value=True,
             key=f"hide_handled_{university}",
+            # The filter is applied during the scan, so changing it mid-run would only
+            # desynchronise the option from the job already reading it.
+            disabled=busy,
         )
         options = {"hide_handled": hide_handled}
     else:
@@ -606,7 +630,11 @@ def _render_portal(university: str) -> None:
 
     result = st.session_state.get(scan_key)
     if result:
-        _render_scan_result(university, result)
+        _render_scan_result(
+            university,
+            result,
+            hide_handled=hide_handled if university == "hkust" else None,
+        )
 
     _render_log_section(university)
 

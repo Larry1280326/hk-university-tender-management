@@ -69,6 +69,10 @@ class TenderParser:
 
     def __init__(self, page: Page):
         self.page = page
+        # Tender numbers skipped because Gmail already handled them, in listing order.
+        # The UI reports this instead of how many references Gmail held: only these
+        # were actually removed from the tables.
+        self.skipped_handled_refs: List[str] = []
 
     @property
     def listing_url(self) -> str:
@@ -192,6 +196,7 @@ class TenderParser:
         at another university does not hide the same reference here.
         """
         handled = set(existing_tenders or ())
+        self.skipped_handled_refs = []
 
         if not browser_utils.navigate(
             self.page,
@@ -230,6 +235,7 @@ class TenderParser:
 
             norm_no = normalize_tender_ref(tender_no)
             if norm_no and handled_tender_key(self.SLUG, norm_no) in handled:
+                self.skipped_handled_refs.append(tender_no)
                 if progress_callback:
                     progress_callback(
                         position + 1, total_rows, f"{tender_no} (Already in Gmail - Skipped)"
