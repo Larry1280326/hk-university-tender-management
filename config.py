@@ -204,7 +204,7 @@ MAIL_TAG = os.getenv("MAIL_TAG", "") or os.getenv("HKUST_MAIL_TAG", "HKUST Tende
 HKUST_MAIL_TAG = MAIL_TAG
 
 # How far back to look when deciding whether a tender has already been dealt with. The
-# check reads subject lines in Inbox, Drafts and Sent, so this also bounds its cost.
+# check reads subject lines in Drafts and Sent, so this also bounds its cost.
 MAIL_LOOKBACK_DAYS = _env_int("MAIL_LOOKBACK_DAYS", 60, "HKUST_MAIL_LOOKBACK_DAYS")
 HKUST_MAIL_LOOKBACK_DAYS = MAIL_LOOKBACK_DAYS
 

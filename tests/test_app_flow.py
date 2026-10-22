@@ -76,7 +76,7 @@ class TestProcessedTenderNumbers(unittest.TestCase):
         with patch.object(app, "GoogleAccountMailer") as mailer_cls:
             mailer_cls.return_value.is_configured.return_value = True
             mailer_cls.return_value.get_handled_tenders.return_value = {
-                "TNH2600105": ["Inbox", "Sent"],
+                "TNH2600105": ["Sent"],
                 "TNP2600099": ["Sent"],
             }
 
@@ -100,7 +100,7 @@ class TestProcessedTenderNumbers(unittest.TestCase):
         with patch.object(app, "GoogleAccountMailer") as mailer_cls:
             mailer_cls.return_value.is_configured.return_value = True
             mailer_cls.return_value.get_handled_tenders.return_value = {
-                "TNH2600105": ["Inbox", "Sent"],
+                "TNH2600105": ["Sent"],
             }
 
             buffer = io.StringIO()

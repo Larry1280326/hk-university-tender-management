@@ -97,7 +97,28 @@ class TestMailReader(unittest.TestCase):
             username="test@gmail.com", app_password="password123"
         ).get_handled_tenders()
 
-        self.assertEqual(handled, {"TNH2600105": ["Inbox", "Sent"]})
+        # Only the user's own outgoing copy counts; the received invitation in Inbox
+        # must not hide a tender the user has not acted on.
+        self.assertEqual(handled, {"TNH2600105": ["Sent"]})
+
+    @patch("imaplib.IMAP4_SSL")
+    def test_received_notification_is_not_treated_as_handled(self, mock_imap_cls):
+        """Being invited is not handling: an Inbox-only reference hides nothing."""
+        mock_imap, state = scan_mock(
+            {
+                _SENT: [],
+                _DRAFTS: [],
+                "INBOX": ["Invitation to Tender - TNG2600120 EOI - Chip Fabrication"],
+            }
+        )
+        mock_imap_cls.return_value = mock_imap
+
+        handled = GoogleAccountMailer(
+            username="test@gmail.com", app_password="password123"
+        ).get_handled_tenders()
+
+        self.assertEqual(handled, {})
+        self.assertNotIn("INBOX", state["selected"])
 
     @patch("imaplib.IMAP4_SSL")
     def test_localized_sent_folder_is_resolved_by_imap_flag(self, mock_imap_cls):

@@ -190,8 +190,11 @@ class GoogleAccountMailer:
             return False, f"Connection failed: {e}"
 
     # Mailboxes examined to decide whether a tender has already been dealt with, in the
-    # order the report lists them.
-    HANDLED_SCAN_FOLDERS = ("Inbox", "Drafts", "Sent")
+    # order the report lists them. Inbox is deliberately excluded: receiving an
+    # invitation notification would otherwise count as handling it and hide every
+    # invited tender from the portal. Replies the user writes still land in Sent (and
+    # unsent ones in Drafts), so both of those keep working.
+    HANDLED_SCAN_FOLDERS = ("Drafts", "Sent")
 
     # Gmail returns a 500-subject FETCH in about a fifth of the time 100-subject batches
     # take, so the round-trip count dominates the cost of this scan.
@@ -237,11 +240,12 @@ class GoogleAccountMailer:
         return refs
 
     def get_handled_tenders(self, lookback_days: Optional[int] = None) -> Dict[str, List[str]]:
-        """Map each tender ref to the mailbox(es) it appears in, e.g. ``{"TNH2600105": ["Sent", "Inbox"]}``.
+        """Map each tender ref to the mailbox(es) it appears in, e.g. ``{"TNH2600105": ["Sent"]}``.
 
-        A tender counts as handled when its reference shows up in a subject line of Inbox,
-        Drafts or Sent within the lookback window -- so a reply you sent counts even though
-        nobody ever labelled it.
+        A tender counts as handled when the user's own draft or sent message carries its
+        reference in the subject within the lookback window -- so a reply counts even
+        though nobody ever labelled it. A notification merely received in Inbox does not
+        count, or the portal's own invitation emails would hide the invitations.
         """
         if not self.is_configured():
             return {}
@@ -255,7 +259,6 @@ class GoogleAccountMailer:
         # time out on a slow link, and Gmail caps concurrent IMAP connections.
         with self.imap_session() as mail:
             folders = {
-                "Inbox": "INBOX",
                 "Drafts": self._find_folder_by_flag(mail, "\\Drafts", default="[Gmail]/Drafts"),
                 "Sent": self._find_folder_by_flag(mail, "\\Sent", default="[Gmail]/Sent Mail"),
             }

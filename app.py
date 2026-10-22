@@ -391,7 +391,7 @@ def draft_emails_for_tenders(
 
 
 def get_processed_tender_numbers(*, log=console.print, mailer=None) -> Set[Tuple[str, str]]:
-    """Scan Inbox, Drafts and Sent for tenders already dealt with.
+    """Scan Drafts and Sent for tenders already dealt with.
 
     Returns ``(slug, normalized_ref)`` keys, which the scraper uses to hide those rows.
     The slug keeps a reference handled at one university from hiding another university's
@@ -402,13 +402,13 @@ def get_processed_tender_numbers(*, log=console.print, mailer=None) -> Set[Tuple
         return set()
 
     days = config.MAIL_LOOKBACK_DAYS
-    log(f"[*] Checking Inbox, Drafts and Sent (last {days} days)...")
+    log(f"[*] Checking Drafts and Sent (last {days} days)...")
     log("Scanning mailboxes for already-handled tenders...")
     handled = mailer.get_handled_tenders()
 
     if not handled:
         log(
-            f"No tender references found in Inbox, Drafts or Sent in the last "
+            f"No tender references found in Drafts or Sent in the last "
             f"{days} days."
         )
         return set()

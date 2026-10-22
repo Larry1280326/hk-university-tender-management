@@ -2,7 +2,7 @@
 
 Automated workflow supporting **HKUST** (`w5.ab.ust.hk/jstd`), **CUHK (CUPro)** (`cupro-cuhk.com`), and **CityU (ETS)** (`etender.cityu.edu.hk`):
 1. **HKUST Workflow**:
-   - Before scraping the HKUST portal, scan Gmail (`Inbox`, `Drafts`, and `Sent`) for tenders you have already dealt with over the last `MAIL_LOOKBACK_DAYS` days (default 60), so they are hidden from the scrape. (The CUHK and CityU workflows do not run this check yet.)
+   - Before scraping the HKUST portal, scan Gmail (`Drafts` and `Sent`) for tenders you have already dealt with over the last `MAIL_LOOKBACK_DAYS` days (default 60), so they are hidden from the scrape. Received notifications alone do not count as handled. (The CUHK and CityU workflows do not run this check yet.)
    - Log in to the HKUST e-Tendering Portal (`https://w5.ab.ust.hk/jstd/td_login`), accepting Terms & Conditions if redirected to `td_welcome`, and wait for Google reCAPTCHA readiness.
    - Scrape the offer selection page (`td_tender_offr_sel`), which renders **My Tender Invitation / Interested Tender(s)** (`#inviteTenderList`) and **Tender Notice** (`#openTenderList`).
    - Open the interactive checklist directly for selection, download released documents for selected **invited tenders** into `<DOCUMENT_DIR>/HKUST/<project_name>/`, and automatically draft personalized enquiry emails in **Gmail** (with company details and Business Registration certificate attached) for selected **open tenders**.
@@ -65,7 +65,7 @@ GMAIL_USER=your_email@gmail.com
 GMAIL_APP_PASSWORD=your_16_char_app_password
 GMAIL_DRAFTS_URL=https://mail.google.com/mail/#drafts
 MAIL_TAG=HKUST Tenders
-# How far back Inbox/Drafts/Sent are scanned to decide a tender is already handled
+# How far back Drafts/Sent are scanned to decide a tender is already handled
 # MAIL_LOOKBACK_DAYS=60
 
 # Company Information (Loaded dynamically into email drafts)
@@ -141,7 +141,7 @@ uv run python app.py
 
 #### Interactive Main Menu:
 - **1. HKUST**:
-  1. Scans `Inbox`, `Drafts`, and `Sent` via IMAP to skip already-handled tenders.
+  1. Scans `Drafts` and `Sent` via IMAP to skip already-handled tenders.
   2. Logs in and scrapes both tender tables (`#inviteTenderList` and `#openTenderList`).
   3. Opens the interactive tender checklist directly (`Space` to toggle, `a` to select all, `i` to invert, `Enter` to confirm).
   4. If any **invited tenders** are selected, prompts to download their released documents into `<DOCUMENT_DIR>/HKUST/<project_name>/`.
@@ -178,10 +178,11 @@ uv run python app.py --visible
 ## Tender Tracking & Gmail Labels
 
 1. **Already-handled check (runs before every HKUST scrape)**: the tool reads the **subject lines** of your
-   Inbox, Drafts and Sent folders for the last `MAIL_LOOKBACK_DAYS` days (default 60). A tender
-   found there is hidden from the tender list, and the run reports the total number of handled tender
-   references found. This is what makes a reply you sent count as handled — labels are never consulted, so
-   nothing has to be tagged for it to work.
+   Drafts and Sent folders for the last `MAIL_LOOKBACK_DAYS` days (default 60). A tender found there is
+   hidden from the tender list, and the run reports the total number of handled tender references found.
+   This is what makes a reply you sent count as handled — labels are never consulted, so nothing has to be
+   tagged for it to work. Notifications sitting in Inbox are ignored: receiving an invitation email is not
+   the same as having dealt with the tender, and counting it would hide every invited tender.
 2. **Immediate Draft Tagging**: When drafts are created in Gmail, the `HKUST Tenders` label (configured by `MAIL_TAG` in `.env`) is automatically attached to the newly saved drafts.
 
 The `HKUST Tenders` label is applied only to drafts the tool creates. Nothing in the tool reads it
