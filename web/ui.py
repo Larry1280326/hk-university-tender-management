@@ -11,6 +11,7 @@ import config
 from mailer.template import generate_tender_email
 from web.auth import AuthResult
 from web.bootstrap import certificate_fingerprint
+from web.gemini_bridge import BRIDGE_HEIGHT, render_gemini_bridge
 from web.jobs import JobError, JobManager, TERMINAL_STATUSES
 from web.select_logic import (
     draftable_tenders,
@@ -231,8 +232,12 @@ def _render_job(
         st.rerun(scope="app")
 
 
-def _render_download_result(result: Optional[Dict], key: str) -> None:
-    zip_path = (result or {}).get("zip") or ""
+def _app_url() -> str:
+    """The page URL, used to build an absolute link to the static bridge page."""
+    return str(getattr(st.context, "url", "") or "").rstrip("/")
+
+
+def _render_zip_button(zip_path: str, key: str) -> None:
     if zip_path and Path(zip_path).is_file():
         with open(zip_path, "rb") as handle:
             st.download_button(
@@ -244,6 +249,28 @@ def _render_download_result(result: Optional[Dict], key: str) -> None:
             )
     else:
         st.info("No documents were found for that selection.")
+
+
+def _render_download_result(result: Optional[Dict], key: str) -> None:
+    zip_path = (result or {}).get("zip") or ""
+    prompt = ((result or {}).get("gemini") or {}).get("prompt") or ""
+
+    if prompt:
+        # The browser button lives in an iframe, so it cannot share a row with a
+        # Streamlit widget except through columns. A narrow first column keeps the two
+        # controls side by side instead of half a page apart.
+        gemini_column, zip_column = st.columns([1, 4])
+        with gemini_column:
+            st.components.v1.html(
+                render_gemini_bridge(prompt, app_url=_app_url()),
+                height=BRIDGE_HEIGHT,
+            )
+        with zip_column:
+            _render_zip_button(zip_path, key)
+        with st.expander("Gemini prompt"):
+            st.code(prompt, language="markdown")
+    else:
+        _render_zip_button(zip_path, key)
 
 
 def _render_draft_result(result: Optional[Dict], key: str) -> None:

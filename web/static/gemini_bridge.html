@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gemini handoff</title>
+<style>
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+    margin: 32px auto;
+    max-width: 640px;
+    padding: 0 20px;
+    color: #1f2937;
+    background: #ffffff;
+  }
+  h1 { font-size: 20px; margin-bottom: 12px; }
+  #status { padding: 12px 14px; border-radius: 8px; background: #f3f4f6; }
+  #status.ok { background: #ecfdf5; color: #065f46; }
+  #status.error { background: #fef2f2; color: #991b1b; }
+  .hint { color: #6b7280; font-size: 14px; }
+</style>
+</head>
+<body>
+<h1>Gemini handoff</h1>
+<p id="status">Waiting for the Tender Portal…</p>
+<p class="hint">
+  This page passes the prompt to the Send to Gemini extension. It never puts the prompt
+  in the address bar, browser history, or storage. Leave it open until it reports back.
+</p>
+<script>
+// Opened by the Tender Portal component as a top-level page, because Chrome does not
+// expose chrome.runtime inside Streamlit's sandboxed, opaque-origin component iframe.
+// The portal postMessages the prompt; this page forwards it to the extension and
+// nothing else. The prompt is held in memory only.
+const EXTENSION_ID = "gklmoobnblcdiglifjmdilofgndghmml";
+const statusEl = document.getElementById("status");
+
+function setStatus(text, kind) {
+  statusEl.textContent = text;
+  statusEl.className = kind || "";
+}
+
+function report(payload) {
+  if (window.opener) {
+    window.opener.postMessage(payload, "*");
+  }
+}
+
+function extensionReady() {
+  return Boolean(window.chrome && chrome.runtime && chrome.runtime.sendMessage);
+}
+
+function sendToGemini(prompt) {
+  if (!extensionReady()) {
+    setStatus(
+      "Send to Gemini is not installed or is disabled in this browser. " +
+      "Copy the prompt from the Tender Portal instead.",
+      "error"
+    );
+    report({type: "autofill-result", ok: false, error: "extension unavailable"});
+    return;
+  }
+  setStatus("Sending the prompt to Gemini…");
+  chrome.runtime.sendMessage(
+    EXTENSION_ID,
+    {type: "autofill", prompt: prompt, autoSubmit: false},
+    (response) => {
+      const error = chrome.runtime.lastError;
+      if (error) {
+        setStatus("Could not reach Send to Gemini: " + error.message, "error");
+        report({type: "autofill-result", ok: false, error: error.message});
+        return;
+      }
+      setStatus(
+        "Sent. Gemini opens in a new tab with the prompt filled in but not submitted. " +
+        "Attach the documents from the downloaded ZIP there and press Enter.",
+        "ok"
+      );
+      report({type: "autofill-result", ok: true, result: response || null});
+      // The confirmation has been read; close the bridge tab and leave Gemini open.
+      window.setTimeout(() => window.close(), 1600);
+    }
+  );
+}
+
+window.addEventListener("message", (event) => {
+  // Only the window that opened this page may hand over a prompt. The portal's
+  // component runs in an opaque origin, so an origin string cannot be compared.
+  if (!window.opener || event.source !== window.opener) {
+    return;
+  }
+  const data = event.data || {};
+  if (data.type !== "autofill" || typeof data.prompt !== "string" || !data.prompt) {
+    return;
+  }
+  sendToGemini(data.prompt);
+});
+
+// The portal waits for this before sending the prompt, so a missing extension is
+// reported in the app rather than silently opening an empty Gemini tab.
+report({type: "bridge-ready", extension: extensionReady()});
+if (!extensionReady()) {
+  setStatus(
+    "Send to Gemini is not installed or is disabled in this browser. " +
+    "Install it, then use the portal's Gemini button again.",
+    "error"
+  );
+}
+</script>
+</body>
+</html>

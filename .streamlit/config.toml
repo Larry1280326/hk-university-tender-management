@@ -1,6 +1,9 @@
 [server]
 headless = true
 maxUploadSize = 10
+# Serves web/static/gemini_bridge.html, the top-level page that hands the Gemini prompt
+# to the browser extension (Streamlit's component iframe cannot reach it).
+enableStaticServing = true
 
 [browser]
 gatherUsageStats = false
